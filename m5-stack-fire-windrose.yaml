@@ -223,7 +223,7 @@ display:
       while (dir < 0) dir += 360.0;
       while (dir >= 360.0) dir -= 360.0;
       int bft = beaufort_number(speed);
-      static const int sample_cap = 5088;
+      static const int sample_cap = 1700;
       static uint8_t sample_sector[sample_cap] = {0};
       static uint8_t sample_bft[sample_cap] = {0};
       static uint32_t sample_ts[sample_cap] = {0};
