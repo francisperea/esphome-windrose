@@ -1,6 +1,7 @@
 substitutions:
   wind_direction_entity: sensor.estacion_direccion_del_viento
   wind_speed_entity: sensor.estacion_velocidad_del_viento
+  wind_sample_capacity: "212"
 
 esphome:
   name: m5-stack-fire
@@ -14,107 +15,126 @@ esp32:
 psram:
 
 logger:
+  level: DEBUG
+
+# -------------------------------------------------------------------
+# HOME ASSISTANT API
+# -------------------------------------------------------------------
 
 api:
   encryption:
-    key: !secret m5_stack_fire_encryption_key
+    key: !secret m5_stack_fire__encryption_key
+
+  # Este dispositivo solo necesita una conexión con HA.
+  # Dejamos una segunda como margen para diagnóstico.
+  max_connections: 2
+  max_send_queue: 4
+  batch_delay: 100ms
+
   on_client_connected:
     then:
       - lambda: |-
           id(ha_api_connected) = true;
-      - component.update: m5_display
+          id(ha_api_disconnects) = 0;
+
   on_client_disconnected:
     then:
       - lambda: |-
           id(ha_api_connected) = false;
-      - component.update: m5_display
+          id(ha_api_disconnects)++;
 
+# -------------------------------------------------------------------
+# OTA
+# -------------------------------------------------------------------
+
+ota:
+ - platform: esphome
+# -------------------------------------------------------------------
+# WIFI
+# -------------------------------------------------------------------
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  power_save_mode: NONE
+
+  post_connect_roaming: true
+  enable_btm: false
+  enable_rrm: true
+
+# -------------------------------------------------------------------
+# GLOBALS
+# -------------------------------------------------------------------
 globals:
+
+  # Estado de la conexión API de Home Assistant
   - id: ha_api_connected
     type: bool
     restore_value: false
     initial_value: "false"
 
-ota:
+  # Número de desconexiones API desde el último arranque
+  - id: ha_api_disconnects
+    type: int
+    restore_value: false
+    initial_value: "0"
 
-wifi:
-  ssid: !secret wifi_ssid
-  password: !secret wifi_password
-  ap:
-    ssid: "M5Stack Fire Fallback"
-    password: "12345678"
+  # Número de muestras almacenadas
+  - id: sample_count
+    type: int
+    restore_value: false
+    initial_value: "0"
 
-captive_portal:
+  # Posición donde se escribirá la siguiente muestra
+  - id: sample_pos
+    type: int
+    restore_value: false
+    initial_value: "0"
 
-web_server:
-  port: 80
+  # ---------------------------------------------------------------
+  # HISTÓRICO
+  #
+  # No ponemos initial_value en los arrays.
+  # ESPHome/C++ los inicializa a cero mediante el constructor
+  # predeterminado de GlobalsComponent.
+  # ---------------------------------------------------------------
 
-spi:
-  clk_pin: GPIO18
-  mosi_pin: GPIO23
-  miso_pin: GPIO19
+  - id: sample_sector
+    type: uint8_t[${wind_sample_capacity}]
+    restore_value: false
 
-output:
-  - platform: ledc
-    pin: GPIO32
-    id: backlight
+  - id: sample_bft
+    type: uint8_t[${wind_sample_capacity}]
+    restore_value: false
 
-light:
-  - platform: monochromatic
-    id: display_backlight
-    name: "Display Backlight"
-    output: backlight
-    restore_mode: ALWAYS_ON
+  - id: sample_ts
+    type: uint32_t[${wind_sample_capacity}]
+    restore_value: false
 
-font:
-  - file: "gfonts://Roboto"
-    id: font_title
-    size: 18
-  - file: "gfonts://Roboto"
-    id: font_value
-    size: 24
-  - file: "gfonts://Roboto"
-    id: font_small
-    size: 12
+  # Número de muestras por sector
+  - id: sector_count
+    type: uint16_t[16]
+    restore_value: false
 
-binary_sensor:
-  - platform: gpio
-    id: button_a
-    name: "Button A"
-    pin:
-      number: GPIO39
-      inverted: true
-    on_press:
-      then:
-        - light.turn_on:
-            id: display_backlight
-            brightness: 35%
+  # Número de muestras por sector y Beaufort
+  - id: sector_bft_count
+    type: uint16_t[16][13]
+    restore_value: false
 
-  - platform: gpio
-    id: button_b
-    name: "Button B"
-    pin:
-      number: GPIO38
-      inverted: true
-    on_press:
-      then:
-        - light.turn_on:
-            id: display_backlight
-            brightness: 70%
+  # Número de muestras de calma (Beaufort 0)
+  - id: calm_count
+    type: uint16_t
+    restore_value: false
+    initial_value: "0"
 
-  - platform: gpio
-    id: button_c
-    name: "Button C"
-    pin:
-      number: GPIO37
-      inverted: true
-    on_press:
-      then:
-        - light.turn_on:
-            id: display_backlight
-            brightness: 100%
+    
+# -------------------------------------------------------------------
+# HOME ASSISTANT SENSORS
+# -------------------------------------------------------------------
 
 sensor:
+
   - platform: homeassistant
     id: wind_direction
     entity_id: ${wind_direction_entity}
@@ -125,40 +145,285 @@ sensor:
     entity_id: ${wind_speed_entity}
     internal: true
 
+  # RSSI WiFi
   - platform: wifi_signal
     id: wifi_db
     name: "WiFi Signal"
     update_interval: 60s
 
+  # Uptime
   - platform: uptime
     id: uptime_sensor
     name: "Uptime"
 
+# -------------------------------------------------------------------
+# WIFI INFO
+# -------------------------------------------------------------------
+
 text_sensor:
+
   - platform: wifi_info
     ip_address:
       name: "IP Address"
+
     ssid:
       name: "Connected SSID"
 
+# -------------------------------------------------------------------
+# TIME FROM HOME ASSISTANT
+# -------------------------------------------------------------------
+
 time:
+
   - platform: homeassistant
     id: ha_time
 
+# -------------------------------------------------------------------
+# SAMPLE ACQUISITION
+#
+# Una muestra cada 16 segundos.
+#
+# IMPORTANTE:
+# Esto ya NO se ejecuta dentro del lambda de la pantalla.
+# -------------------------------------------------------------------
+
+interval:
+
+  - interval: 17s
+    then:
+      - lambda: |-
+          // ---------------------------------------------------------
+          // No podemos almacenar una muestra si no tenemos datos
+          // válidos procedentes de Home Assistant.
+          // ---------------------------------------------------------
+
+          if (!id(ha_api_connected))
+            return;
+
+          if (isnan(id(wind_direction).state) ||
+              isnan(id(wind_speed).state))
+            return;
+
+          // ---------------------------------------------------------
+          // Normalizar dirección
+          // ---------------------------------------------------------
+
+          float dir = id(wind_direction).state;
+
+          while (dir < 0.0f)
+            dir += 360.0f;
+
+          while (dir >= 360.0f)
+            dir -= 360.0f;
+
+          // ---------------------------------------------------------
+          // Beaufort
+          // ---------------------------------------------------------
+
+          float knots = id(wind_speed).state;
+          int bft = 0;
+
+          if (knots < 1.0f) bft = 0;
+          else if (knots < 4.0f) bft = 1;
+          else if (knots < 7.0f) bft = 2;
+          else if (knots < 11.0f) bft = 3;
+          else if (knots < 17.0f) bft = 4;
+          else if (knots < 22.0f) bft = 5;
+          else if (knots < 28.0f) bft = 6;
+          else if (knots < 34.0f) bft = 7;
+          else if (knots < 41.0f) bft = 8;
+          else if (knots < 48.0f) bft = 9;
+          else if (knots < 56.0f) bft = 10;
+          else if (knots < 64.0f) bft = 11;
+          else bft = 12;
+
+          // ---------------------------------------------------------
+          // Sector de 22.5 grados
+          // ---------------------------------------------------------
+
+          int sector = int((dir + 11.25f) / 22.5f) % 16;
+
+          // ---------------------------------------------------------
+          // Hora
+          // ---------------------------------------------------------
+
+          auto current_time = id(ha_time).now();
+
+          uint32_t epoch = 0;
+
+          if (current_time.is_valid())
+            epoch = current_time.timestamp;
+
+          // ---------------------------------------------------------
+          // Buffer circular
+          // ---------------------------------------------------------
+
+          int pos = id(sample_pos);
+
+          // Si el buffer ya está lleno, eliminamos primero
+          // la muestra antigua de los contadores.
+          if (id(sample_count) >= ${wind_sample_capacity}) {
+
+            int old_sector = id(sample_sector)[pos];
+            int old_bft = id(sample_bft)[pos];
+
+            if (id(sector_count)[old_sector] > 0)
+              id(sector_count)[old_sector]--;
+
+            if (id(sector_bft_count)[old_sector][old_bft] > 0)
+              id(sector_bft_count)[old_sector][old_bft]--;
+
+            if (old_bft == 0 && id(calm_count) > 0)
+              id(calm_count)--;
+
+          } else {
+            id(sample_count)++;
+          }
+
+          // ---------------------------------------------------------
+          // Guardar nueva muestra
+          // ---------------------------------------------------------
+
+          id(sample_sector)[pos] = sector;
+          id(sample_bft)[pos] = bft;
+          id(sample_ts)[pos] = epoch;
+
+          // ---------------------------------------------------------
+          // Actualizar contadores
+          // ---------------------------------------------------------
+
+          id(sector_count)[sector]++;
+          id(sector_bft_count)[sector][bft]++;
+
+          if (bft == 0)
+            id(calm_count)++;
+
+          // ---------------------------------------------------------
+          // Siguiente posición del buffer
+          // ---------------------------------------------------------
+
+          id(sample_pos) = (pos + 1) % ${wind_sample_capacity};
+
+# -------------------------------------------------------------------
+# DISPLAY BACKLIGHT
+# -------------------------------------------------------------------
+
+output:
+
+  - platform: ledc
+    pin: GPIO32
+    id: backlight
+
+light:
+
+  - platform: monochromatic
+    id: display_backlight
+    name: "Display Backlight"
+    output: backlight
+    restore_mode: ALWAYS_ON
+
+# -------------------------------------------------------------------
+# BUTTONS
+# -------------------------------------------------------------------
+
+binary_sensor:
+
+  - platform: gpio
+    id: button_a
+    name: "Button A"
+
+    pin:
+      number: GPIO39
+      inverted: true
+
+    on_press:
+      then:
+        - light.turn_on:
+            id: display_backlight
+            brightness: 35%
+
+  - platform: gpio
+    id: button_b
+    name: "Button B"
+
+    pin:
+      number: GPIO38
+      inverted: true
+
+    on_press:
+      then:
+        - light.turn_on:
+            id: display_backlight
+            brightness: 70%
+
+  - platform: gpio
+    id: button_c
+    name: "Button C"
+
+    pin:
+      number: GPIO37
+      inverted: true
+
+    on_press:
+      then:
+        - light.turn_on:
+            id: display_backlight
+            brightness: 100%
+
+# -------------------------------------------------------------------
+# FONTS
+# -------------------------------------------------------------------
+
+font:
+
+  - file: "gfonts://Roboto"
+    id: font_title
+    size: 18
+
+  - file: "gfonts://Roboto"
+    id: font_value
+    size: 24
+
+  - file: "gfonts://Roboto"
+    id: font_small
+    size: 12
+
+# -------------------------------------------------------------------
+# SPI DISPLAY
+# -------------------------------------------------------------------
+
+spi:
+
+  clk_pin: GPIO18
+  mosi_pin: GPIO23
+  miso_pin: GPIO19
+
+# -------------------------------------------------------------------
+# DISPLAY
+# -------------------------------------------------------------------
+
 display:
+
   - platform: ili9xxx
     id: m5_display
     model: M5STACK
+
     cs_pin: GPIO14
     dc_pin: GPIO27
     reset_pin: GPIO33
+
     data_rate: 20MHz
     invert_colors: true
+
+    # Seguimos actualizando la pantalla aproximadamente cada 17 s.
     update_interval: 17s
+
     lambda: |-
-      const int cx = 142;
-      const int cy = 144;
-      const int r = 62;
+
+      // ============================================================
+      // COLORES
+      // ============================================================
+
       const auto bg = Color(255, 255, 255);
       const auto text = Color(20, 20, 20);
       const auto grid = Color(205, 205, 205);
@@ -166,7 +431,20 @@ display:
       const auto blue = Color(45, 65, 220);
       const auto red = Color(255, 0, 0);
 
+      // ============================================================
+      // GEOMETRÍA
+      // ============================================================
+
+      const int cx = 142;
+      const int cy = 144;
+      const int r = 62;
+
+      // ============================================================
+      // BEAUFORT
+      // ============================================================
+
       auto beaufort_number = [](float knots) -> int {
+
         if (knots < 1.0f) return 0;
         if (knots < 4.0f) return 1;
         if (knots < 7.0f) return 2;
@@ -179,11 +457,14 @@ display:
         if (knots < 48.0f) return 9;
         if (knots < 56.0f) return 10;
         if (knots < 64.0f) return 11;
+
         return 12;
       };
 
       auto beaufort_color = [](int bft) -> Color {
+
         switch (bft) {
+
           case 0: return Color(35, 70, 255);
           case 1: return Color(45, 95, 255);
           case 2: return Color(45, 170, 245);
@@ -196,180 +477,672 @@ display:
           case 9: return Color(255, 255, 25);
           case 10: return Color(255, 190, 55);
           case 11: return Color(255, 105, 50);
-          default: return Color(255, 45, 45);
+
+          default:
+            return Color(255, 45, 45);
         }
       };
 
+      // ============================================================
+      // FONDO
+      // ============================================================
+
       it.fill(bg);
-      it.print(160, 4, id(font_title), text, TextAlign::TOP_CENTER, "Wind Vane");
-      it.print(8, 27, id(font_small), text, "Period:");
+
+      // ============================================================
+      // TÍTULO
+      // ============================================================
+
+      it.print(
+        160, 4,
+        id(font_title),
+        text,
+        TextAlign::TOP_CENTER,
+        "Wind Vane"
+      );
+
+      // ============================================================
+      // DIAGNÓSTICO / ESTADO
+      // ============================================================
 
       if (!id(ha_api_connected)) {
-        it.print(160, 96, id(font_title), muted, TextAlign::CENTER, "Waiting for HA API");
-        it.print(160, 122, id(font_small), muted, TextAlign::CENTER, "Add this ESPHome device");
-        it.print(160, 140, id(font_small), muted, TextAlign::CENTER, "in Home Assistant");
+
+        it.print(
+          160, 82,
+          id(font_title),
+          muted,
+          TextAlign::CENTER,
+          "Waiting for HA API"
+        );
+
+        // RSSI
+        if (!isnan(id(wifi_db).state)) {
+
+          it.printf(
+            160, 110,
+            id(font_small),
+            muted,
+            TextAlign::CENTER,
+            "WiFi: %.0f dBm",
+            id(wifi_db).state
+          );
+
+        } else {
+
+          it.print(
+            160, 110,
+            id(font_small),
+            muted,
+            TextAlign::CENTER,
+            "WiFi: unknown"
+          );
+        }
+
+        // Número de desconexiones API
+        it.printf(
+          160, 128,
+          id(font_small),
+          muted,
+          TextAlign::CENTER,
+          "API disconnects: %d",
+          id(ha_api_disconnects)
+        );
+
+        // Uptime
+        it.printf(
+          160, 146,
+          id(font_small),
+          muted,
+          TextAlign::CENTER,
+          "Uptime: %.0f s",
+          id(uptime_sensor).state
+        );
+
         return;
       }
 
-      if (isnan(id(wind_direction).state) || isnan(id(wind_speed).state)) {
-        it.print(160, 112, id(font_title), muted, TextAlign::CENTER, "Waiting for HA sensors");
-        it.print(160, 136, id(font_small), muted, TextAlign::CENTER, "${wind_direction_entity}");
-        it.print(160, 152, id(font_small), muted, TextAlign::CENTER, "${wind_speed_entity}");
+      // ============================================================
+      // SIN DATOS DE VIENTO
+      // ============================================================
+
+      if (isnan(id(wind_direction).state) ||
+          isnan(id(wind_speed).state)) {
+
+        it.print(
+          160, 100,
+          id(font_title),
+          muted,
+          TextAlign::CENTER,
+          "Waiting for HA sensors"
+        );
+
+        it.print(
+          160, 124,
+          id(font_small),
+          muted,
+          TextAlign::CENTER,
+          "${wind_direction_entity}"
+        );
+
+        it.print(
+          160, 142,
+          id(font_small),
+          muted,
+          TextAlign::CENTER,
+          "${wind_speed_entity}"
+        );
+
         return;
       }
+
+      // ============================================================
+      // DATOS ACTUALES
+      // ============================================================
 
       float dir = id(wind_direction).state;
       float speed = id(wind_speed).state;
-      while (dir < 0) dir += 360.0;
-      while (dir >= 360.0) dir -= 360.0;
-      int bft = beaufort_number(speed);
-      static const int sample_cap = 1700;
-      static uint8_t sample_sector[sample_cap] = {0};
-      static uint8_t sample_bft[sample_cap] = {0};
-      static uint32_t sample_ts[sample_cap] = {0};
-      static int sample_pos = 0;
-      static int sample_count = 0;
-      static uint32_t last_sample_ms = 0;
-      uint32_t now_ms = millis();
-      auto current_time = id(ha_time).now();
-      uint32_t now_epoch = current_time.is_valid() ? current_time.timestamp : 0;
 
-      if (last_sample_ms == 0 || now_ms - last_sample_ms >= 16000) {
-        int sector = int((dir + 11.25f) / 22.5f) % 16;
-        sample_sector[sample_pos] = sector;
-        sample_bft[sample_pos] = bft;
-        sample_ts[sample_pos] = now_epoch;
-        sample_pos = (sample_pos + 1) % sample_cap;
-        if (sample_count < sample_cap) sample_count++;
-        last_sample_ms = now_ms;
-      }
+      while (dir < 0.0f)
+        dir += 360.0f;
+
+      while (dir >= 360.0f)
+        dir -= 360.0f;
+
+      int bft = beaufort_number(speed);
+
+      // ============================================================
+      // HORA DEL HISTÓRICO
+      // ============================================================
 
       char start_buf[10] = "--:--:--";
       char end_buf[10] = "--:--:--";
-      if (sample_count > 0 && now_epoch > 0) {
-        int oldest_index = sample_count < sample_cap ? 0 : sample_pos;
-        uint32_t start_epoch = sample_ts[oldest_index];
+      
+      uint32_t start_epoch = 0;
+      uint32_t end_epoch = 0;
+      
+      int count = id(sample_count);
+      
+      if (count > 0) {
+      
+        // ---------------------------------------------------------------
+        // El buffer es circular.
+        //
+        // sample_pos apunta SIEMPRE a la posición donde se escribirá
+        // la siguiente muestra.
+        //
+        // Si aún no está lleno, la muestra más antigua está en 0.
+        //
+        // Si está lleno, la muestra más antigua está en sample_pos.
+        // ---------------------------------------------------------------
+      
+        int oldest_index;
+      
+        if (count < ${wind_sample_capacity})
+          oldest_index = 0;
+        else
+          oldest_index = id(sample_pos);
+      
+        // ---------------------------------------------------------------
+        // La muestra más reciente es justo la anterior a sample_pos.
+        // ---------------------------------------------------------------
+      
+        int newest_index =
+          (id(sample_pos) - 1 + ${wind_sample_capacity}) %
+          ${wind_sample_capacity};
+      
+        start_epoch = id(sample_ts)[oldest_index];
+        end_epoch = id(sample_ts)[newest_index];
+      
+        // ---------------------------------------------------------------
+        // Si por alguna razón la muestra más antigua no tiene timestamp
+        // válido, buscamos la primera válida siguiendo el buffer.
+        // ---------------------------------------------------------------
+      
         if (start_epoch == 0) {
-          for (int i = 0; i < sample_count; i++) {
-            int idx = sample_count < sample_cap ? i : (sample_pos + i) % sample_cap;
-            if (sample_ts[idx] > 0) {
-              start_epoch = sample_ts[idx];
+      
+          for (int i = 0; i < count; i++) {
+      
+            int idx =
+              (oldest_index + i) %
+              ${wind_sample_capacity};
+      
+            if (id(sample_ts)[idx] > 0) {
+              start_epoch = id(sample_ts)[idx];
               break;
             }
           }
         }
+      
+        // ---------------------------------------------------------------
+        // Lo mismo para la muestra más reciente.
+        // ---------------------------------------------------------------
+      
+        if (end_epoch == 0) {
+      
+          for (int i = 0; i < count; i++) {
+      
+            int idx =
+              (newest_index - i +
+               ${wind_sample_capacity}) %
+              ${wind_sample_capacity};
+      
+            if (id(sample_ts)[idx] > 0) {
+              end_epoch = id(sample_ts)[idx];
+              break;
+            }
+          }
+        }
+      
+        // ---------------------------------------------------------------
+        // Formatear hora inicial
+        // ---------------------------------------------------------------
+      
         if (start_epoch > 0) {
+      
           time_t start_time = start_epoch;
           struct tm *start_tm = localtime(&start_time);
-          strftime(start_buf, sizeof(start_buf), "%H:%M:%S", start_tm);
+      
+          if (start_tm != nullptr)
+            strftime(
+              start_buf,
+              sizeof(start_buf),
+              "%H:%M:%S",
+              start_tm
+            );
         }
-        time_t end_time = now_epoch;
-        struct tm *end_tm = localtime(&end_time);
-        strftime(end_buf, sizeof(end_buf), "%H:%M:%S", end_tm);
+      
+        // ---------------------------------------------------------------
+        // Formatear hora final
+        // ---------------------------------------------------------------
+      
+        if (end_epoch > 0) {
+      
+          time_t end_time = end_epoch;
+          struct tm *end_tm = localtime(&end_time);
+      
+          if (end_tm != nullptr)
+            strftime(
+              end_buf,
+              sizeof(end_buf),
+              "%H:%M:%S",
+              end_tm
+            );
+        }
       }
-      it.printf(62, 27, id(font_small), text, "%s - %s", start_buf, end_buf);
 
-      it.print(8, 49, id(font_small), text, "Wind direction");
-      it.printf(8, 63, id(font_value), text, "%.1f °", dir);
-      it.print(198, 49, id(font_small), text, "Wind speed");
-      it.printf(198, 63, id(font_value), text, "%.2f kt", speed);
+      it.print(
+        8, 27,
+        id(font_small),
+        text,
+        "Period:"
+      );
+
+      it.printf(
+        62, 27,
+        id(font_small),
+        text,
+        "%s - %s",
+        start_buf,
+        end_buf
+      );
+
+      // ============================================================
+      // DATOS DE VIENTO
+      // ============================================================
+
+      it.print(
+        8, 49,
+        id(font_small),
+        text,
+        "Wind direction"
+      );
+
+      it.printf(
+        8, 63,
+        id(font_value),
+        text,
+        "%.1f °",
+        dir
+      );
+
+      it.print(
+        198, 49,
+        id(font_small),
+        text,
+        "Wind speed"
+      );
+
+      it.printf(
+        198, 63,
+        id(font_value),
+        text,
+        "%.2f kt",
+        speed
+      );
+
+      // ============================================================
+      // ROSA DE LOS VIENTOS
+      // ============================================================
 
       it.circle(cx, cy, r, grid);
       it.circle(cx, cy, r * 3 / 4, grid);
       it.circle(cx, cy, r / 2, grid);
       it.circle(cx, cy, r / 4, grid);
 
+      // 16 radios
       for (int i = 0; i < 16; i++) {
-        float a = (i * 22.5f - 90.0f) * M_PI / 180.0f;
+
+        float a =
+          (i * 22.5f - 90.0f) *
+          M_PI / 180.0f;
+
         int x = cx + cosf(a) * r;
         int y = cy + sinf(a) * r;
-        it.line(cx, cy, x, y, Color(228, 228, 228));
+
+        it.line(
+          cx,
+          cy,
+          x,
+          y,
+          Color(228, 228, 228)
+        );
       }
 
-      int sector_count[16] = {0};
-      int sector_bft_count[16][13] = {0};
+      // ============================================================
+      // MÁXIMO DE MUESTRAS POR SECTOR
+      //
+      // Ya no recorremos todas muestras.
+      // Los contadores han sido mantenidos por interval.
+      // ============================================================
+
       int max_sector_count = 1;
-      int calm_count = 0;
-      for (int i = 0; i < sample_count; i++) {
-        int s = sample_sector[i];
-        int sb = sample_bft[i];
-        sector_count[s]++;
-        sector_bft_count[s][sb]++;
-        if (sb == 0) calm_count++;
-        if (sector_count[s] > max_sector_count) max_sector_count = sector_count[s];
-      }
 
       for (int i = 0; i < 16; i++) {
-        if (sector_count[i] == 0) continue;
-        float a = (i * 22.5f - 90.0f) * M_PI / 180.0f;
+
+        if (id(sector_count)[i] > max_sector_count)
+          max_sector_count = id(sector_count)[i];
+      }
+
+      // ============================================================
+      // DIBUJAR SECTORES
+      // ============================================================
+
+      for (int i = 0; i < 16; i++) {
+
+        int count = id(sector_count)[i];
+
+        if (count == 0)
+          continue;
+
+        float a =
+          (i * 22.5f - 90.0f) *
+          M_PI / 180.0f;
+
         int inner = 14;
-        int outer = 22 + ((r - 24) * sector_count[i]) / max_sector_count;
+
+        int outer =
+          22 +
+          ((r - 24) * count) /
+          max_sector_count;
+
         int run_start = inner;
+
         for (int bb = 0; bb <= 12; bb++) {
-          int c = sector_bft_count[i][bb];
-          if (c == 0) continue;
-          int segment_len = ((outer - inner) * c) / sector_count[i];
-          if (segment_len < 2) segment_len = 2;
-          int run_end = run_start + segment_len;
-          if (run_end > outer) run_end = outer;
-          int hx1 = cx + cosf(a) * run_start;
-          int hy1 = cy + sinf(a) * run_start;
-          int hx2 = cx + cosf(a) * run_end;
-          int hy2 = cy + sinf(a) * run_end;
+
+          int c =
+            id(sector_bft_count)[i][bb];
+
+          if (c == 0)
+            continue;
+
+          int segment_len =
+            ((outer - inner) * c) /
+            count;
+
+          if (segment_len < 2)
+            segment_len = 2;
+
+          int run_end =
+            run_start + segment_len;
+
+          if (run_end > outer)
+            run_end = outer;
+
+          int hx1 =
+            cx + cosf(a) * run_start;
+
+          int hy1 =
+            cy + sinf(a) * run_start;
+
+          int hx2 =
+            cx + cosf(a) * run_end;
+
+          int hy2 =
+            cy + sinf(a) * run_end;
+
           float nxh = -sinf(a);
           float nyh = cosf(a);
+
           auto col = beaufort_color(bb);
+
+          // Grosor del segmento
           for (int offset = -3; offset <= 3; offset++) {
-            int ox = lroundf(nxh * offset);
-            int oy = lroundf(nyh * offset);
-            it.line(hx1 + ox, hy1 + oy, hx2 + ox, hy2 + oy, col);
+
+            int ox =
+              lroundf(nxh * offset);
+
+            int oy =
+              lroundf(nyh * offset);
+
+            it.line(
+              hx1 + ox,
+              hy1 + oy,
+              hx2 + ox,
+              hy2 + oy,
+              col
+            );
           }
+
           run_start = run_end;
-          if (run_start >= outer) break;
+
+          if (run_start >= outer)
+            break;
         }
       }
 
-      it.print(cx, cy - r - 13, id(font_title), text, TextAlign::CENTER, "N");
-      it.print(cx + r + 14, cy, id(font_title), text, TextAlign::CENTER, "E");
-      it.print(cx, cy + r + 13, id(font_title), text, TextAlign::CENTER, "S");
-      it.print(cx - r - 14, cy, id(font_title), text, TextAlign::CENTER, "W");
+      // ============================================================
+      // PUNTOS CARDINALES
+      // ============================================================
 
-      float a = (dir - 90.0f) * M_PI / 180.0f;
-      int tip_x = cx + cosf(a) * (r + 3);
-      int tip_y = cy + sinf(a) * (r + 3);
-      int base_x = cx + cosf(a) * (r + 17);
-      int base_y = cy + sinf(a) * (r + 17);
+      it.print(
+        cx,
+        cy - r - 13,
+        id(font_title),
+        text,
+        TextAlign::CENTER,
+        "N"
+      );
+
+      it.print(
+        cx + r + 14,
+        cy,
+        id(font_title),
+        text,
+        TextAlign::CENTER,
+        "E"
+      );
+
+      it.print(
+        cx,
+        cy + r + 13,
+        id(font_title),
+        text,
+        TextAlign::CENTER,
+        "S"
+      );
+
+      it.print(
+        cx - r - 14,
+        cy,
+        id(font_title),
+        text,
+        TextAlign::CENTER,
+        "W"
+      );
+
+      // ============================================================
+      // FLECHA DE DIRECCIÓN
+      // ============================================================
+
+      float a =
+        (dir - 90.0f) *
+        M_PI / 180.0f;
+
+      int tip_x =
+        cx + cosf(a) * (r + 3);
+
+      int tip_y =
+        cy + sinf(a) * (r + 3);
+
+      int base_x =
+        cx + cosf(a) * (r + 17);
+
+      int base_y =
+        cy + sinf(a) * (r + 17);
+
       float nx = -sinf(a);
       float ny = cosf(a);
-      int left_x = base_x + nx * 7;
-      int left_y = base_y + ny * 7;
-      int right_x = base_x - nx * 7;
-      int right_y = base_y - ny * 7;
-      for (float t = -1.0f; t <= 1.0f; t += 0.25f) {
-        int bx = base_x + nx * 7 * t;
-        int by = base_y + ny * 7 * t;
-        it.line(tip_x, tip_y, bx, by, red);
-      }
-      it.line(left_x, left_y, right_x, right_y, red);
 
-      int center_pct = sample_count > 0 ? (calm_count * 100) / sample_count : 0;
-      it.filled_circle(cx, cy, 13, blue);
-      it.printf(cx, cy, id(font_small), bg, TextAlign::CENTER, "%d%%", center_pct);
+      int left_x =
+        base_x + nx * 7;
+
+      int left_y =
+        base_y + ny * 7;
+
+      int right_x =
+        base_x - nx * 7;
+
+      int right_y =
+        base_y - ny * 7;
+
+      for (float t = -1.0f;
+           t <= 1.0f;
+           t += 0.25f) {
+
+        int bx =
+          base_x + nx * 7 * t;
+
+        int by =
+          base_y + ny * 7 * t;
+
+        it.line(
+          tip_x,
+          tip_y,
+          bx,
+          by,
+          red
+        );
+      }
+
+      it.line(
+        left_x,
+        left_y,
+        right_x,
+        right_y,
+        red
+      );
+
+      // ============================================================
+      // CALMA
+      // ============================================================
+
+      int center_pct =
+        id(sample_count) > 0
+          ? (id(calm_count) * 100) /
+            id(sample_count)
+          : 0;
+
+      it.filled_circle(
+        cx,
+        cy,
+        13,
+        blue
+      );
+
+      it.printf(
+        cx,
+        cy,
+        id(font_small),
+        bg,
+        TextAlign::CENTER,
+        "%d%%",
+        center_pct
+      );
+
+      // ============================================================
+      // ESCALA BEAUFORT
+      // ============================================================
 
       const int bar_x = 287;
       const int bar_y = 96;
       const int bar_w = 20;
       const int band_h = 9;
-      it.print(bar_x - 9, 84, id(font_small), text, "Beaufort");
+
+      it.print(
+        bar_x - 9,
+        84,
+        id(font_small),
+        text,
+        "Beaufort"
+      );
+
       for (int bb = 12; bb >= 0; bb--) {
-        int y = bar_y + (12 - bb) * band_h;
-        it.filled_rectangle(bar_x, y, bar_w, band_h, beaufort_color(bb));
-        it.rectangle(bar_x, y, bar_w, band_h, Color(190, 190, 190));
-        it.printf(bar_x + bar_w + 4, y - 1, id(font_small), text, "%d", bb);
+
+        int y =
+          bar_y +
+          (12 - bb) * band_h;
+
+        it.filled_rectangle(
+          bar_x,
+          y,
+          bar_w,
+          band_h,
+          beaufort_color(bb)
+        );
+
+        it.rectangle(
+          bar_x,
+          y,
+          bar_w,
+          band_h,
+          Color(190, 190, 190)
+        );
+
+        it.printf(
+          bar_x + bar_w + 4,
+          y - 1,
+          id(font_small),
+          text,
+          "%d",
+          bb
+        );
       }
 
-      int marker_y = bar_y + (12 - bft) * band_h + band_h / 2;
+      // ============================================================
+      // MARCADOR BEAUFORT ACTUAL
+      // ============================================================
+
+      int marker_y =
+        bar_y +
+        (12 - bft) * band_h +
+        band_h / 2;
+
       for (int i = 0; i < 8; i++) {
-        it.line(bar_x - 10, marker_y - 5 + i, bar_x - 1, marker_y, red);
-        it.line(bar_x - 10, marker_y + 5 - i, bar_x - 1, marker_y, red);
+
+        it.line(
+          bar_x - 10,
+          marker_y - 5 + i,
+          bar_x - 1,
+          marker_y,
+          red
+        );
+
+        it.line(
+          bar_x - 10,
+          marker_y + 5 - i,
+          bar_x - 1,
+          marker_y,
+          red
+        );
       }
+
+      // ============================================================
+      // DIAGNÓSTICO DISCRETO
+      // ============================================================
+
+      it.printf(
+        8,
+        216,
+        id(font_small),
+        muted,
+        "WiFi %.0f dBm",
+        id(wifi_db).state
+      );
+
+      it.printf(
+        150,
+        216,
+        id(font_small),
+        muted,
+        "API OK"
+      );
+
+      it.printf(
+        218,
+        216,
+        id(font_small),
+        muted,
+        "%d/%d",
+        id(sample_count),
+        ${wind_sample_capacity}
+      );
