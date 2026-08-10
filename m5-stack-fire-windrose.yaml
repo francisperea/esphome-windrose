@@ -10,10 +10,21 @@ esphome:
 esp32:
   board: m5stack-fire
   framework:
-    type: arduino
+    type: esp-idf
     advanced:
-      minimum_chip_revision: "3.1"
+      minimum_chip_revision: "3.0"
       sram1_as_iram: true
+
+# -------------------------------------------------------------------
+# PSRAM
+#
+# El M5Stack Fire dispone de PSRAM.
+# La usamos para el framebuffer completo del display.
+# -------------------------------------------------------------------
+
+psram:
+  mode: quad
+  speed: 80MHz
 
 logger:
   level: WARN
@@ -54,23 +65,18 @@ wifi:
 
 globals:
 
-  # Estado actual de la conexión con Home Assistant
   - id: ha_api_connected
     type: bool
     restore_value: false
     initial_value: "false"
 
-  # Número de desconexiones API desde el último arranque
   - id: ha_api_disconnects
     type: uint32_t
     restore_value: false
     initial_value: "0"
 
   # ---------------------------------------------------------------
-  # ÚLTIMOS DATOS VÁLIDOS DE VIENTO
-  #
-  # Estos valores NO se borran al perder la conexión con HA.
-  # La pantalla seguirá mostrando la última lectura válida.
+  # ÚLTIMOS DATOS VÁLIDOS
   # ---------------------------------------------------------------
 
   - id: last_wind_direction
@@ -102,32 +108,26 @@ globals:
     restore_value: false
     initial_value: "0"
 
-  # Sector de cada muestra
   - id: sample_sector
     type: uint8_t[${wind_sample_capacity}]
     restore_value: false
 
-  # Beaufort de cada muestra
   - id: sample_bft
     type: uint8_t[${wind_sample_capacity}]
     restore_value: false
 
-  # Timestamp de cada muestra
   - id: sample_ts
     type: uint32_t[${wind_sample_capacity}]
     restore_value: false
 
-  # Número de muestras por sector
   - id: sector_count
     type: uint16_t[16]
     restore_value: false
 
-  # Número de muestras por sector y Beaufort
   - id: sector_bft_count
     type: uint16_t[16][13]
     restore_value: false
 
-  # Número de muestras de calma
   - id: calm_count
     type: uint16_t
     restore_value: false
@@ -139,32 +139,28 @@ globals:
 
 sensor:
 
-  # Dirección del viento
   - platform: homeassistant
     id: wind_direction
     entity_id: ${wind_direction_entity}
     internal: true
 
-  # Velocidad del viento
   - platform: homeassistant
     id: wind_speed
     entity_id: ${wind_speed_entity}
     internal: true
 
-  # RSSI WiFi
   - platform: wifi_signal
     id: wifi_db
     internal: true
     update_interval: 60s
 
-  # Uptime
   - platform: uptime
     id: uptime_sensor
     internal: true
     update_interval: 60s
 
 # -------------------------------------------------------------------
-# TIME FROM HOME ASSISTANT
+# TIME
 # -------------------------------------------------------------------
 
 time:
@@ -173,14 +169,7 @@ time:
     id: ha_time
 
 # -------------------------------------------------------------------
-# SAMPLE ACQUISITION
-#
-# Una muestra cada 17 segundos.
-#
-# IMPORTANTE:
-# - Solo se recoge una muestra si la API está conectada.
-# - Solo se recoge si los dos sensores tienen datos válidos.
-# - Los últimos datos válidos se conservan aunque se pierda HA.
+# ADQUISICIÓN DE DATOS
 # -------------------------------------------------------------------
 
 interval:
@@ -189,25 +178,15 @@ interval:
     then:
       - lambda: |-
 
-          // ---------------------------------------------------------
-          // Sin conexión API: no hacemos nada.
-          //
-          // Los últimos datos válidos permanecen intactos.
-          // ---------------------------------------------------------
-
           if (!id(ha_api_connected))
             return;
-
-          // ---------------------------------------------------------
-          // Comprobar datos válidos
-          // ---------------------------------------------------------
 
           if (isnan(id(wind_direction).state) ||
               isnan(id(wind_speed).state))
             return;
 
           // ---------------------------------------------------------
-          // Obtener y normalizar dirección
+          // Dirección
           // ---------------------------------------------------------
 
           float dir = id(wind_direction).state;
@@ -221,9 +200,7 @@ interval:
           float knots = id(wind_speed).state;
 
           // ---------------------------------------------------------
-          // Guardar inmediatamente la última lectura válida
-          //
-          // Esto es independiente del histórico.
+          // Última lectura válida
           // ---------------------------------------------------------
 
           id(last_wind_direction) = dir;
@@ -258,7 +235,7 @@ interval:
             int((dir + 11.25f) / 22.5f) % 16;
 
           // ---------------------------------------------------------
-          // Hora
+          // Timestamp
           // ---------------------------------------------------------
 
           auto current_time = id(ha_time).now();
@@ -273,9 +250,6 @@ interval:
           // ---------------------------------------------------------
 
           int pos = id(sample_pos);
-
-          // Si el buffer está lleno, eliminar la muestra antigua
-          // de los contadores.
 
           if (id(sample_count) >= ${wind_sample_capacity}) {
 
@@ -301,7 +275,7 @@ interval:
           }
 
           // ---------------------------------------------------------
-          // Guardar nueva muestra
+          // Guardar muestra
           // ---------------------------------------------------------
 
           id(sample_sector)[pos] = sector;
@@ -309,7 +283,7 @@ interval:
           id(sample_ts)[pos] = epoch;
 
           // ---------------------------------------------------------
-          // Actualizar contadores
+          // Contadores
           // ---------------------------------------------------------
 
           id(sector_count)[sector]++;
@@ -326,9 +300,45 @@ interval:
             (pos + 1) % ${wind_sample_capacity};
 
 # -------------------------------------------------------------------
-# DISPLAY BACKLIGHT
+# BACKLIGHT
 # -------------------------------------------------------------------
+binary_sensor:
 
+  - platform: gpio
+    id: button_a
+    name: "Button A"
+    pin:
+      number: GPIO39
+      inverted: true
+    on_press:
+      then:
+        - light.turn_on:
+            id: display_backlight
+            brightness: 35%
+
+  - platform: gpio
+    id: button_b
+    name: "Button B"
+    pin:
+      number: GPIO38
+      inverted: true
+    on_press:
+      then:
+        - light.turn_on:
+            id: display_backlight
+            brightness: 70%
+
+  - platform: gpio
+    id: button_c
+    name: "Button C"
+    pin:
+      number: GPIO37
+      inverted: true
+    on_press:
+      then:
+        - light.turn_on:
+            id: display_backlight
+            brightness: 100%
 output:
 
   - platform: ledc
@@ -350,25 +360,36 @@ light:
 spi:
   clk_pin: GPIO18
   mosi_pin: GPIO23
-  miso_pin: GPIO19
 
 # -------------------------------------------------------------------
-# FONT
+# FUENTES
 # -------------------------------------------------------------------
 
 font:
 
-  - file: "gfonts://Roboto"
+  - file:
+      type: gfonts
+      family: Open+Sans
+      weight: 600
     id: font_title
-    size: 18
+    size: 20
+    bpp: 4
 
-  - file: "gfonts://Roboto"
+  - file:
+      type: gfonts
+      family: Open+Sans
+      weight: 600
     id: font_value
-    size: 24
+    size: 28
+    bpp: 4
 
-  - file: "gfonts://Roboto"
+  - file:
+      type: gfonts
+      family: Open+Sans
+      weight: 600
     id: font_small
-    size: 12
+    size: 16
+    bpp: 4
 
 # -------------------------------------------------------------------
 # DISPLAY
@@ -384,11 +405,27 @@ display:
     dc_pin: GPIO27
     reset_pin: GPIO33
 
-    data_rate: 20MHz
+    # Más velocidad = menor tiempo bloqueado durante la transferencia.
+    data_rate: 40MHz
+
     invert_colors: true
 
-    # Mantenemos el refresco bajo para reducir carga de CPU.
+    # ---------------------------------------------------------------
+    # MUY IMPORTANTE:
+    #
+    # Dejamos que ESPHome limpie el framebuffer antes de cada ciclo.
+    # Así nunca quedan restos del ciclo anterior.
+    # ---------------------------------------------------------------
+
+    auto_clear_enabled: true
+
+    # Framebuffer completo en PSRAM.
+    buffer_size: 100%
+
+    # No necesitamos refrescar continuamente.
     update_interval: 30s
+
+    use_axis_flips: false
 
     lambda: |-
 
@@ -396,20 +433,36 @@ display:
       // COLORES
       // ============================================================
 
-      const auto bg = Color(255, 255, 255);
-      const auto text = Color(20, 20, 20);
-      const auto grid = Color(205, 205, 205);
-      const auto muted = Color(95, 95, 95);
-      const auto blue = Color(45, 65, 220);
-      const auto red = Color(255, 0, 0);
+      const auto bg =
+        Color(255, 255, 255);
+
+      const auto text =
+        Color(20, 20, 20);
+
+      const auto grid =
+        Color(205, 205, 205);
+
+      const auto radial =
+        Color(228, 228, 228);
+
+      const auto muted =
+        Color(95, 95, 95);
+
+      const auto blue =
+        Color(45, 65, 220);
+
+      const auto red =
+        Color(255, 0, 0);
 
       // ============================================================
       // GEOMETRÍA
+      //
+      // La rosa se ha subido unos píxeles.
       // ============================================================
 
       const int cx = 142;
-      const int cy = 144;
-      const int r = 62;
+      const int cy = 128;
+      const int r = 58;
 
       // ============================================================
       // BEAUFORT
@@ -474,7 +527,7 @@ display:
       );
 
       // ============================================================
-      // PERIODO DEL HISTÓRICO
+      // PERIODO
       // ============================================================
 
       char start_buf[10] = "--:--:--";
@@ -505,10 +558,6 @@ display:
         end_epoch =
           id(sample_ts)[newest_index];
 
-        // ---------------------------------------------------------
-        // Buscar primera marca temporal válida
-        // ---------------------------------------------------------
-
         if (start_epoch == 0) {
 
           for (int i = 0; i < count; i++) {
@@ -526,10 +575,6 @@ display:
             }
           }
         }
-
-        // ---------------------------------------------------------
-        // Buscar última marca temporal válida
-        // ---------------------------------------------------------
 
         if (end_epoch == 0) {
 
@@ -550,10 +595,6 @@ display:
           }
         }
 
-        // ---------------------------------------------------------
-        // Formatear hora inicial
-        // ---------------------------------------------------------
-
         if (start_epoch > 0) {
 
           time_t start_time = start_epoch;
@@ -571,10 +612,6 @@ display:
             );
           }
         }
-
-        // ---------------------------------------------------------
-        // Formatear hora final
-        // ---------------------------------------------------------
 
         if (end_epoch > 0) {
 
@@ -596,14 +633,14 @@ display:
       }
 
       it.print(
-        8, 27,
+        8, 26,
         id(font_small),
         text,
         "Period:"
       );
 
       it.printf(
-        62, 27,
+        65, 26,
         id(font_small),
         text,
         "%s - %s",
@@ -612,26 +649,24 @@ display:
       );
 
       // ============================================================
-      // SI TODAVÍA NO HAY NINGUNA LECTURA
+      // DATOS ACTUALES
       // ============================================================
 
-      if (!id(have_wind_data)) {
+      it.print(
+        8, 49,
+        id(font_small),
+        text,
+        "Wind direction"
+      );
 
-        it.print(
-          160, 105,
-          id(font_value),
-          muted,
-          TextAlign::TOP_CENTER,
-          "Waiting for wind data"
-        );
+      it.print(
+        198, 49,
+        id(font_small),
+        text,
+        "Wind speed"
+      );
 
-      } else {
 
-        // ==========================================================
-        // ÚLTIMA LECTURA VÁLIDA
-        //
-        // Estos valores permanecen aunque HA esté desconectado.
-        // ==========================================================
 
         float dir =
           id(last_wind_direction);
@@ -642,30 +677,12 @@ display:
         int bft =
           beaufort_number(speed);
 
-        // ==========================================================
-        // DATOS ACTUALES
-        // ==========================================================
-
-        it.print(
-          8, 49,
-          id(font_small),
-          text,
-          "Wind direction"
-        );
-
         it.printf(
           8, 63,
           id(font_value),
           text,
           "%.1f °",
           dir
-        );
-
-        it.print(
-          198, 49,
-          id(font_small),
-          text,
-          "Wind speed"
         );
 
         it.printf(
@@ -680,45 +697,73 @@ display:
         // ROSA DE LOS VIENTOS
         // ==========================================================
 
+        // ----------------------------------------------------------
+        // Circunferencias
+        // ----------------------------------------------------------
+
         it.circle(
-          cx, cy, r, grid
+          cx, cy, r,
+          grid
         );
 
         it.circle(
-          cx, cy, r * 3 / 4, grid
+          cx, cy, r * 3 / 4,
+          grid
         );
 
         it.circle(
-          cx, cy, r / 2, grid
+          cx, cy, r / 2,
+          grid
         );
 
         it.circle(
-          cx, cy, r / 4, grid
+          cx, cy, r / 4,
+          grid
         );
+
+        // ----------------------------------------------------------
+        // Líneas radiales
+        // ----------------------------------------------------------
+
+        // Las coordenadas se calculan una sola vez en cada ciclo.
+        // Evitamos repetir trigonometría para sectores y rosa.
+
+        static bool geometry_ready = false;
+
+        static int gx[16];
+        static int gy[16];
+
+        if (!geometry_ready) {
+
+          for (int i = 0; i < 16; i++) {
+
+            float angle =
+              (i * 22.5f - 90.0f) *
+              M_PI / 180.0f;
+
+            gx[i] =
+              lroundf(cosf(angle) * r);
+
+            gy[i] =
+              lroundf(sinf(angle) * r);
+          }
+
+          geometry_ready = true;
+        }
 
         for (int i = 0; i < 16; i++) {
-
-          float a =
-            (i * 22.5f - 90.0f) *
-            M_PI / 180.0f;
-
-          int x =
-            cx + cosf(a) * r;
-
-          int y =
-            cy + sinf(a) * r;
 
           it.line(
             cx,
             cy,
-            x,
-            y,
-            Color(228, 228, 228)
+            cx + gx[i],
+            cy + gy[i],
+            radial
           );
         }
 
         // ==========================================================
-        // MÁXIMO DE MUESTRAS POR SECTOR
+        // MÁXIMO DE MUESTRAS
         // ==========================================================
 
         int max_sector_count = 1;
@@ -733,7 +778,7 @@ display:
         }
 
         // ==========================================================
-        // DIBUJAR SECTORES
+        // SECTORES HISTÓRICOS
         // ==========================================================
 
         for (int i = 0; i < 16; i++) {
@@ -748,11 +793,15 @@ display:
             (i * 22.5f - 90.0f) *
             M_PI / 180.0f;
 
+          float ca = cosf(a);
+          float sa = sinf(a);
+
           int inner = 14;
 
           int outer =
             22 +
-            ((r - 24) * sector_samples) /
+            ((r - 24) *
+             sector_samples) /
             max_sector_count;
 
           int run_start = inner;
@@ -779,25 +828,33 @@ display:
               run_end = outer;
 
             int hx1 =
-              cx + cosf(a) * run_start;
+              cx + lroundf(ca * run_start);
 
             int hy1 =
-              cy + sinf(a) * run_start;
+              cy + lroundf(sa * run_start);
 
             int hx2 =
-              cx + cosf(a) * run_end;
+              cx + lroundf(ca * run_end);
 
             int hy2 =
-              cy + sinf(a) * run_end;
+              cy + lroundf(sa * run_end);
 
-            float nxh = -sinf(a);
-            float nyh = cosf(a);
+            float nxh = -sa;
+            float nyh = ca;
 
             auto col =
               beaufort_color(bb);
 
-            for (int offset = -3;
-                 offset <= 3;
+            // ------------------------------------------------------
+            // Grosor de los sectores.
+            //
+            // 5 líneas en lugar de 7:
+            // visualmente sigue siendo sólido pero reduce bastante
+            // el número de operaciones de dibujo.
+            // ------------------------------------------------------
+
+            for (int offset = -2;
+                 offset <= 2;
                  offset++) {
 
               int ox =
@@ -828,7 +885,7 @@ display:
 
         it.print(
           cx,
-          cy - r - 13,
+          cy - r - 8,
           id(font_title),
           text,
           TextAlign::CENTER,
@@ -836,7 +893,7 @@ display:
         );
 
         it.print(
-          cx + r + 14,
+          cx + r + 10,
           cy,
           id(font_title),
           text,
@@ -846,7 +903,7 @@ display:
 
         it.print(
           cx,
-          cy + r + 13,
+          cy + r + 5,
           id(font_title),
           text,
           TextAlign::CENTER,
@@ -854,7 +911,7 @@ display:
         );
 
         it.print(
-          cx - r - 14,
+          cx - r - 10,
           cy,
           id(font_title),
           text,
@@ -870,42 +927,54 @@ display:
           (dir - 90.0f) *
           M_PI / 180.0f;
 
+        float ca =
+          cosf(a);
+
+        float sa =
+          sinf(a);
+
+        float nx =
+          -sa;
+
+        float ny =
+          ca;
+
         int tip_x =
-          cx + cosf(a) * (r + 3);
+          cx + lroundf(ca * (r + 3));
 
         int tip_y =
-          cy + sinf(a) * (r + 3);
+          cy + lroundf(sa * (r + 3));
 
         int base_x =
-          cx + cosf(a) * (r + 17);
+          cx + lroundf(ca * (r + 17));
 
         int base_y =
-          cy + sinf(a) * (r + 17);
-
-        float nx = -sinf(a);
-        float ny = cosf(a);
+          cy + lroundf(sa * (r + 17));
 
         int left_x =
-          base_x + nx * 7;
+          base_x + lroundf(nx * 7);
 
         int left_y =
-          base_y + ny * 7;
+          base_y + lroundf(ny * 7);
 
         int right_x =
-          base_x - nx * 7;
+          base_x - lroundf(nx * 7);
 
         int right_y =
-          base_y - ny * 7;
+          base_y - lroundf(ny * 7);
 
+        // Cuerpo de la flecha
         for (float t = -1.0f;
              t <= 1.0f;
              t += 0.25f) {
 
           int bx =
-            base_x + nx * 7 * t;
+            base_x +
+            lroundf(nx * 7 * t);
 
           int by =
-            base_y + ny * 7 * t;
+            base_y +
+            lroundf(ny * 7 * t);
 
           it.line(
             tip_x,
@@ -1003,7 +1072,7 @@ display:
         }
 
         // ==========================================================
-        // MARCADOR BEAUFORT ACTUAL
+        // MARCADOR BEAUFORT
         // ==========================================================
 
         int marker_y =
@@ -1029,13 +1098,10 @@ display:
             red
           );
         }
-      }
+
 
       // ============================================================
       // DIAGNÓSTICO INFERIOR
-      //
-      // NO mostramos "API OK" ni "Waiting for HA API".
-      // Solo información útil para observar estabilidad.
       // ============================================================
 
       it.printf(
@@ -1065,7 +1131,17 @@ display:
         id(uptime_sensor).state
       );
 
-    use_axis_flips: false
+# -------------------------------------------------------------------
+# WEB SERVER
+# -------------------------------------------------------------------
 
 web_server:
   version: 3
+  include_internal: true
+
+# -------------------------------------------------------------------
+# RUNTIME STATS
+# -------------------------------------------------------------------
+
+runtime_stats:
+  log_interval: 60s
