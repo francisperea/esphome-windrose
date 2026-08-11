@@ -6,6 +6,7 @@ substitutions:
 esphome:
   name: m5-stack-fire
   friendly_name: M5Stack Fire
+  area: Estudio
 
 esp32:
   board: m5stack-fire
@@ -14,6 +15,11 @@ esp32:
     advanced:
       minimum_chip_revision: "3.0"
       sram1_as_iram: true
+  cpu_frequency: 240MHZ
+  variant: ESP32
+  flash_mode: qio
+  flash_frequency: 80MHZ
+  flash_size: 16MB
 
 # -------------------------------------------------------------------
 # PSRAM
@@ -51,6 +57,15 @@ api:
 ota:
   - platform: esphome
 
+  - platform: http_request
+    id: ota_http_request_1
+
+  - platform: web_server
+
+web_server:
+  version: 3
+  include_internal: true
+
 # -------------------------------------------------------------------
 # WIFI
 # -------------------------------------------------------------------
@@ -58,6 +73,7 @@ ota:
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
+  enable_btm: true
 
 # -------------------------------------------------------------------
 # GLOBALS
@@ -93,6 +109,18 @@ globals:
     type: bool
     restore_value: false
     initial_value: "false"
+
+  # ---------------------------------------------------------------
+  # INSTANTE DE RECEPCIÓN DEL ÚLTIMO DATO DE VIENTO
+  #
+  # Se actualiza directamente cuando llega el dato desde HA.
+  # No depende del intervalo de adquisición de 17 s.
+  # ---------------------------------------------------------------
+
+  - id: last_wind_epoch
+    type: uint32_t
+    restore_value: false
+    initial_value: "0"
 
   # ---------------------------------------------------------------
   # HISTÓRICO
@@ -139,15 +167,69 @@ globals:
 
 sensor:
 
+  # ---------------------------------------------------------------
+  # DIRECCIÓN DEL VIENTO
+  #
+  # Actualiza inmediatamente el valor mostrado.
+  # ---------------------------------------------------------------
+
   - platform: homeassistant
     id: wind_direction
     entity_id: ${wind_direction_entity}
     internal: true
 
+    on_value:
+      then:
+        - lambda: |-
+
+            if (isnan(x))
+              return;
+
+            float dir = x;
+
+            while (dir < 0.0f)
+              dir += 360.0f;
+
+            while (dir >= 360.0f)
+              dir -= 360.0f;
+
+            id(last_wind_direction) = dir;
+            id(have_wind_data) = true;
+
+  # ---------------------------------------------------------------
+  # VELOCIDAD DEL VIENTO
+  #
+  # Los dos sensores llegan juntos.
+  #
+  # Este callback:
+  #   1. Actualiza la velocidad.
+  #   2. Guarda el instante de recepción.
+  #   3. Redibuja inmediatamente la pantalla.
+  # ---------------------------------------------------------------
+
   - platform: homeassistant
     id: wind_speed
     entity_id: ${wind_speed_entity}
     internal: true
+
+    on_value:
+      then:
+        - lambda: |-
+
+            if (isnan(x))
+              return;
+
+            id(last_wind_speed) = x;
+            id(have_wind_data) = true;
+
+            auto current_time =
+              id(ha_time).now();
+
+            if (current_time.is_valid())
+              id(last_wind_epoch) =
+                current_time.timestamp;
+
+        - component.update: m5_display
 
   - platform: wifi_signal
     id: wifi_db
@@ -302,6 +384,7 @@ interval:
 # -------------------------------------------------------------------
 # BACKLIGHT
 # -------------------------------------------------------------------
+
 binary_sensor:
 
   - platform: gpio
@@ -339,6 +422,7 @@ binary_sensor:
         - light.turn_on:
             id: display_backlight
             brightness: 100%
+
 output:
 
   - platform: ledc
@@ -405,25 +489,25 @@ display:
     dc_pin: GPIO27
     reset_pin: GPIO33
 
-    # Más velocidad = menor tiempo bloqueado durante la transferencia.
     data_rate: 40MHz
 
     invert_colors: true
 
-    # ---------------------------------------------------------------
-    # MUY IMPORTANTE:
-    #
-    # Dejamos que ESPHome limpie el framebuffer antes de cada ciclo.
-    # Así nunca quedan restos del ciclo anterior.
-    # ---------------------------------------------------------------
-
     auto_clear_enabled: true
 
-    # Framebuffer completo en PSRAM.
     buffer_size: 100%
 
-    # No necesitamos refrescar continuamente.
-    update_interval: 30s
+    # ---------------------------------------------------------------
+    # La pantalla NO se actualiza periódicamente.
+    #
+    # Se actualiza exclusivamente mediante:
+    #
+    #   component.update: m5_display
+    #
+    # cuando llega un nuevo dato de viento desde Home Assistant.
+    # ---------------------------------------------------------------
+
+    update_interval: never
 
     use_axis_flips: false
 
@@ -456,8 +540,6 @@ display:
 
       // ============================================================
       // GEOMETRÍA
-      //
-      // La rosa se ha subido unos píxeles.
       // ============================================================
 
       const int cx = 142;
@@ -534,7 +616,6 @@ display:
       char end_buf[10] = "--:--:--";
 
       uint32_t start_epoch = 0;
-      uint32_t end_epoch = 0;
 
       int count = id(sample_count);
 
@@ -547,16 +628,8 @@ display:
         else
           oldest_index = id(sample_pos);
 
-        int newest_index =
-          (id(sample_pos) - 1 +
-           ${wind_sample_capacity}) %
-          ${wind_sample_capacity};
-
         start_epoch =
           id(sample_ts)[oldest_index];
-
-        end_epoch =
-          id(sample_ts)[newest_index];
 
         if (start_epoch == 0) {
 
@@ -576,28 +649,20 @@ display:
           }
         }
 
-        if (end_epoch == 0) {
+        // ----------------------------------------------------------
+        // La hora final YA NO se obtiene del histórico.
+        //
+        // Se obtiene directamente del último dato recibido
+        // desde Home Assistant.
+        // ----------------------------------------------------------
 
-          for (int i = 0; i < count; i++) {
-
-            int idx =
-              (newest_index - i +
-               ${wind_sample_capacity}) %
-              ${wind_sample_capacity};
-
-            if (id(sample_ts)[idx] > 0) {
-
-              end_epoch =
-                id(sample_ts)[idx];
-
-              break;
-            }
-          }
-        }
+        uint32_t end_epoch =
+          id(last_wind_epoch);
 
         if (start_epoch > 0) {
 
-          time_t start_time = start_epoch;
+          time_t start_time =
+            start_epoch;
 
           struct tm *start_tm =
             localtime(&start_time);
@@ -615,7 +680,8 @@ display:
 
         if (end_epoch > 0) {
 
-          time_t end_time = end_epoch;
+          time_t end_time =
+            end_epoch;
 
           struct tm *end_tm =
             localtime(&end_time);
@@ -666,439 +732,420 @@ display:
         "Wind speed"
       );
 
+      float dir =
+        id(last_wind_direction);
 
+      float speed =
+        id(last_wind_speed);
 
-        float dir =
-          id(last_wind_direction);
+      int bft =
+        beaufort_number(speed);
 
-        float speed =
-          id(last_wind_speed);
+      it.printf(
+        8, 63,
+        id(font_value),
+        text,
+        "%.1f °",
+        dir
+      );
 
-        int bft =
-          beaufort_number(speed);
+      it.printf(
+        198, 63,
+        id(font_value),
+        text,
+        "%.2f kt",
+        speed
+      );
 
-        it.printf(
-          8, 63,
-          id(font_value),
-          text,
-          "%.1f °",
-          dir
-        );
+      // ==========================================================
+      // ROSA DE LOS VIENTOS
+      // ==========================================================
 
-        it.printf(
-          198, 63,
-          id(font_value),
-          text,
-          "%.2f kt",
-          speed
-        );
+      it.circle(
+        cx, cy, r,
+        grid
+      );
 
-        // ==========================================================
-        // ROSA DE LOS VIENTOS
-        // ==========================================================
+      it.circle(
+        cx, cy, r * 3 / 4,
+        grid
+      );
 
-        // ----------------------------------------------------------
-        // Circunferencias
-        // ----------------------------------------------------------
+      it.circle(
+        cx, cy, r / 2,
+        grid
+      );
 
-        it.circle(
-          cx, cy, r,
-          grid
-        );
+      it.circle(
+        cx, cy, r / 4,
+        grid
+      );
 
-        it.circle(
-          cx, cy, r * 3 / 4,
-          grid
-        );
+      // ----------------------------------------------------------
+      // Líneas radiales
+      // ----------------------------------------------------------
 
-        it.circle(
-          cx, cy, r / 2,
-          grid
-        );
+      static bool geometry_ready = false;
 
-        it.circle(
-          cx, cy, r / 4,
-          grid
-        );
+      static int gx[16];
+      static int gy[16];
 
-        // ----------------------------------------------------------
-        // Líneas radiales
-        // ----------------------------------------------------------
-
-        // Las coordenadas se calculan una sola vez en cada ciclo.
-        // Evitamos repetir trigonometría para sectores y rosa.
-
-        static bool geometry_ready = false;
-
-        static int gx[16];
-        static int gy[16];
-
-        if (!geometry_ready) {
-
-          for (int i = 0; i < 16; i++) {
-
-            float angle =
-              (i * 22.5f - 90.0f) *
-              M_PI / 180.0f;
-
-            gx[i] =
-              lroundf(cosf(angle) * r);
-
-            gy[i] =
-              lroundf(sinf(angle) * r);
-          }
-
-          geometry_ready = true;
-        }
+      if (!geometry_ready) {
 
         for (int i = 0; i < 16; i++) {
 
-          it.line(
-            cx,
-            cy,
-            cx + gx[i],
-            cy + gy[i],
-            radial
-          );
-        }
-
-        // ==========================================================
-        // MÁXIMO DE MUESTRAS
-        // ==========================================================
-
-        int max_sector_count = 1;
-
-        for (int i = 0; i < 16; i++) {
-
-          if (id(sector_count)[i] >
-              max_sector_count)
-
-            max_sector_count =
-              id(sector_count)[i];
-        }
-
-        // ==========================================================
-        // SECTORES HISTÓRICOS
-        // ==========================================================
-
-        for (int i = 0; i < 16; i++) {
-
-          int sector_samples =
-            id(sector_count)[i];
-
-          if (sector_samples == 0)
-            continue;
-
-          float a =
+          float angle =
             (i * 22.5f - 90.0f) *
             M_PI / 180.0f;
 
-          float ca = cosf(a);
-          float sa = sinf(a);
+          gx[i] =
+            lroundf(cosf(angle) * r);
 
-          int inner = 14;
-
-          int outer =
-            22 +
-            ((r - 24) *
-             sector_samples) /
-            max_sector_count;
-
-          int run_start = inner;
-
-          for (int bb = 0; bb <= 12; bb++) {
-
-            int c =
-              id(sector_bft_count)[i][bb];
-
-            if (c == 0)
-              continue;
-
-            int segment_len =
-              ((outer - inner) * c) /
-              sector_samples;
-
-            if (segment_len < 2)
-              segment_len = 2;
-
-            int run_end =
-              run_start + segment_len;
-
-            if (run_end > outer)
-              run_end = outer;
-
-            int hx1 =
-              cx + lroundf(ca * run_start);
-
-            int hy1 =
-              cy + lroundf(sa * run_start);
-
-            int hx2 =
-              cx + lroundf(ca * run_end);
-
-            int hy2 =
-              cy + lroundf(sa * run_end);
-
-            float nxh = -sa;
-            float nyh = ca;
-
-            auto col =
-              beaufort_color(bb);
-
-            // ------------------------------------------------------
-            // Grosor de los sectores.
-            //
-            // 5 líneas en lugar de 7:
-            // visualmente sigue siendo sólido pero reduce bastante
-            // el número de operaciones de dibujo.
-            // ------------------------------------------------------
-
-            for (int offset = -2;
-                 offset <= 2;
-                 offset++) {
-
-              int ox =
-                lroundf(nxh * offset);
-
-              int oy =
-                lroundf(nyh * offset);
-
-              it.line(
-                hx1 + ox,
-                hy1 + oy,
-                hx2 + ox,
-                hy2 + oy,
-                col
-              );
-            }
-
-            run_start = run_end;
-
-            if (run_start >= outer)
-              break;
-          }
+          gy[i] =
+            lroundf(sinf(angle) * r);
         }
 
-        // ==========================================================
-        // PUNTOS CARDINALES
-        // ==========================================================
+        geometry_ready = true;
+      }
 
-        it.print(
-          cx,
-          cy - r - 8,
-          id(font_title),
-          text,
-          TextAlign::CENTER,
-          "N"
-        );
-
-        it.print(
-          cx + r + 10,
-          cy,
-          id(font_title),
-          text,
-          TextAlign::CENTER,
-          "E"
-        );
-
-        it.print(
-          cx,
-          cy + r + 5,
-          id(font_title),
-          text,
-          TextAlign::CENTER,
-          "S"
-        );
-
-        it.print(
-          cx - r - 10,
-          cy,
-          id(font_title),
-          text,
-          TextAlign::CENTER,
-          "W"
-        );
-
-        // ==========================================================
-        // FLECHA DE DIRECCIÓN
-        // ==========================================================
-
-        float a =
-          (dir - 90.0f) *
-          M_PI / 180.0f;
-
-        float ca =
-          cosf(a);
-
-        float sa =
-          sinf(a);
-
-        float nx =
-          -sa;
-
-        float ny =
-          ca;
-
-        int tip_x =
-          cx + lroundf(ca * (r + 3));
-
-        int tip_y =
-          cy + lroundf(sa * (r + 3));
-
-        int base_x =
-          cx + lroundf(ca * (r + 17));
-
-        int base_y =
-          cy + lroundf(sa * (r + 17));
-
-        int left_x =
-          base_x + lroundf(nx * 7);
-
-        int left_y =
-          base_y + lroundf(ny * 7);
-
-        int right_x =
-          base_x - lroundf(nx * 7);
-
-        int right_y =
-          base_y - lroundf(ny * 7);
-
-        // Cuerpo de la flecha
-        for (float t = -1.0f;
-             t <= 1.0f;
-             t += 0.25f) {
-
-          int bx =
-            base_x +
-            lroundf(nx * 7 * t);
-
-          int by =
-            base_y +
-            lroundf(ny * 7 * t);
-
-          it.line(
-            tip_x,
-            tip_y,
-            bx,
-            by,
-            red
-          );
-        }
+      for (int i = 0; i < 16; i++) {
 
         it.line(
-          left_x,
-          left_y,
-          right_x,
-          right_y,
-          red
-        );
-
-        // ==========================================================
-        // CALMA
-        // ==========================================================
-
-        int center_pct =
-          id(sample_count) > 0
-            ? (id(calm_count) * 100) /
-              id(sample_count)
-            : 0;
-
-        it.filled_circle(
           cx,
           cy,
-          13,
-          blue
+          cx + gx[i],
+          cy + gy[i],
+          radial
+        );
+      }
+
+      // ==========================================================
+      // MÁXIMO DE MUESTRAS
+      // ==========================================================
+
+      int max_sector_count = 1;
+
+      for (int i = 0; i < 16; i++) {
+
+        if (id(sector_count)[i] >
+            max_sector_count)
+
+          max_sector_count =
+            id(sector_count)[i];
+      }
+
+      // ==========================================================
+      // SECTORES HISTÓRICOS
+      // ==========================================================
+
+      for (int i = 0; i < 16; i++) {
+
+        int sector_samples =
+          id(sector_count)[i];
+
+        if (sector_samples == 0)
+          continue;
+
+        float a =
+          (i * 22.5f - 90.0f) *
+          M_PI / 180.0f;
+
+        float ca = cosf(a);
+        float sa = sinf(a);
+
+        int inner = 14;
+
+        int outer =
+          22 +
+          ((r - 24) *
+           sector_samples) /
+          max_sector_count;
+
+        int run_start = inner;
+
+        for (int bb = 0; bb <= 12; bb++) {
+
+          int c =
+            id(sector_bft_count)[i][bb];
+
+          if (c == 0)
+            continue;
+
+          int segment_len =
+            ((outer - inner) * c) /
+            sector_samples;
+
+          if (segment_len < 2)
+            segment_len = 2;
+
+          int run_end =
+            run_start + segment_len;
+
+          if (run_end > outer)
+            run_end = outer;
+
+          int hx1 =
+            cx + lroundf(ca * run_start);
+
+          int hy1 =
+            cy + lroundf(sa * run_start);
+
+          int hx2 =
+            cx + lroundf(ca * run_end);
+
+          int hy2 =
+            cy + lroundf(sa * run_end);
+
+          float nxh = -sa;
+          float nyh = ca;
+
+          auto col =
+            beaufort_color(bb);
+
+          for (int offset = -2;
+               offset <= 2;
+               offset++) {
+
+            int ox =
+              lroundf(nxh * offset);
+
+            int oy =
+              lroundf(nyh * offset);
+
+            it.line(
+              hx1 + ox,
+              hy1 + oy,
+              hx2 + ox,
+              hy2 + oy,
+              col
+            );
+          }
+
+          run_start = run_end;
+
+          if (run_start >= outer)
+            break;
+        }
+      }
+
+      // ==========================================================
+      // PUNTOS CARDINALES
+      // ==========================================================
+
+      it.print(
+        cx,
+        cy - r - 8,
+        id(font_title),
+        text,
+        TextAlign::CENTER,
+        "N"
+      );
+
+      it.print(
+        cx + r + 10,
+        cy,
+        id(font_title),
+        text,
+        TextAlign::CENTER,
+        "E"
+      );
+
+      it.print(
+        cx,
+        cy + r + 5,
+        id(font_title),
+        text,
+        TextAlign::CENTER,
+        "S"
+      );
+
+      it.print(
+        cx - r - 10,
+        cy,
+        id(font_title),
+        text,
+        TextAlign::CENTER,
+        "W"
+      );
+
+      // ==========================================================
+      // FLECHA DE DIRECCIÓN
+      // ==========================================================
+
+      float a =
+        (dir - 90.0f) *
+        M_PI / 180.0f;
+
+      float ca =
+        cosf(a);
+
+      float sa =
+        sinf(a);
+
+      float nx =
+        -sa;
+
+      float ny =
+        ca;
+
+      int tip_x =
+        cx + lroundf(ca * (r + 3));
+
+      int tip_y =
+        cy + lroundf(sa * (r + 3));
+
+      int base_x =
+        cx + lroundf(ca * (r + 17));
+
+      int base_y =
+        cy + lroundf(sa * (r + 17));
+
+      int left_x =
+        base_x + lroundf(nx * 7);
+
+      int left_y =
+        base_y + lroundf(ny * 7);
+
+      int right_x =
+        base_x - lroundf(nx * 7);
+
+      int right_y =
+        base_y - lroundf(ny * 7);
+
+      for (float t = -1.0f;
+           t <= 1.0f;
+           t += 0.25f) {
+
+        int bx =
+          base_x +
+          lroundf(nx * 7 * t);
+
+        int by =
+          base_y +
+          lroundf(ny * 7 * t);
+
+        it.line(
+          tip_x,
+          tip_y,
+          bx,
+          by,
+          red
+        );
+      }
+
+      it.line(
+        left_x,
+        left_y,
+        right_x,
+        right_y,
+        red
+      );
+
+      // ==========================================================
+      // CALMA
+      // ==========================================================
+
+      int center_pct =
+        id(sample_count) > 0
+          ? (id(calm_count) * 100) /
+            id(sample_count)
+          : 0;
+
+      it.filled_circle(
+        cx,
+        cy,
+        13,
+        blue
+      );
+
+      it.printf(
+        cx,
+        cy,
+        id(font_small),
+        bg,
+        TextAlign::CENTER,
+        "%d%%",
+        center_pct
+      );
+
+      // ==========================================================
+      // ESCALA BEAUFORT
+      // ==========================================================
+
+      const int bar_x = 287;
+      const int bar_y = 96;
+      const int bar_w = 20;
+      const int band_h = 9;
+
+      it.print(
+        bar_x - 9,
+        84,
+        id(font_small),
+        text,
+        "Beaufort"
+      );
+
+      for (int bb = 12;
+           bb >= 0;
+           bb--) {
+
+        int y =
+          bar_y +
+          (12 - bb) * band_h;
+
+        it.filled_rectangle(
+          bar_x,
+          y,
+          bar_w,
+          band_h,
+          beaufort_color(bb)
+        );
+
+        it.rectangle(
+          bar_x,
+          y,
+          bar_w,
+          band_h,
+          Color(190, 190, 190)
         );
 
         it.printf(
-          cx,
-          cy,
-          id(font_small),
-          bg,
-          TextAlign::CENTER,
-          "%d%%",
-          center_pct
-        );
-
-        // ==========================================================
-        // ESCALA BEAUFORT
-        // ==========================================================
-
-        const int bar_x = 287;
-        const int bar_y = 96;
-        const int bar_w = 20;
-        const int band_h = 9;
-
-        it.print(
-          bar_x - 9,
-          84,
+          bar_x + bar_w + 4,
+          y - 1,
           id(font_small),
           text,
-          "Beaufort"
+          "%d",
+          bb
+        );
+      }
+
+      // ==========================================================
+      // MARCADOR BEAUFORT
+      // ==========================================================
+
+      int marker_y =
+        bar_y +
+        (12 - bft) * band_h +
+        band_h / 2;
+
+      for (int i = 0; i < 8; i++) {
+
+        it.line(
+          bar_x - 10,
+          marker_y - 5 + i,
+          bar_x - 1,
+          marker_y,
+          red
         );
 
-        for (int bb = 12;
-             bb >= 0;
-             bb--) {
-
-          int y =
-            bar_y +
-            (12 - bb) * band_h;
-
-          it.filled_rectangle(
-            bar_x,
-            y,
-            bar_w,
-            band_h,
-            beaufort_color(bb)
-          );
-
-          it.rectangle(
-            bar_x,
-            y,
-            bar_w,
-            band_h,
-            Color(190, 190, 190)
-          );
-
-          it.printf(
-            bar_x + bar_w + 4,
-            y - 1,
-            id(font_small),
-            text,
-            "%d",
-            bb
-          );
-        }
-
-        // ==========================================================
-        // MARCADOR BEAUFORT
-        // ==========================================================
-
-        int marker_y =
-          bar_y +
-          (12 - bft) * band_h +
-          band_h / 2;
-
-        for (int i = 0; i < 8; i++) {
-
-          it.line(
-            bar_x - 10,
-            marker_y - 5 + i,
-            bar_x - 1,
-            marker_y,
-            red
-          );
-
-          it.line(
-            bar_x - 10,
-            marker_y + 5 - i,
-            bar_x - 1,
-            marker_y,
-            red
-          );
-        }
-
+        it.line(
+          bar_x - 10,
+          marker_y + 5 - i,
+          bar_x - 1,
+          marker_y,
+          red
+        );
+      }
 
       // ============================================================
       // DIAGNÓSTICO INFERIOR
@@ -1132,16 +1179,10 @@ display:
       );
 
 # -------------------------------------------------------------------
-# WEB SERVER
-# -------------------------------------------------------------------
-
-web_server:
-  version: 3
-  include_internal: true
-
-# -------------------------------------------------------------------
 # RUNTIME STATS
 # -------------------------------------------------------------------
 
 runtime_stats:
   log_interval: 60s
+
+http_request:
