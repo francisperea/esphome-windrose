@@ -177,16 +177,14 @@ sensor:
     id: wind_direction
     entity_id: ${wind_direction_entity}
     internal: true
-
     on_value:
       then:
         - lambda: |-
-
             if (isnan(x))
               return;
-
+              
             float dir = x;
-
+            
             while (dir < 0.0f)
               dir += 360.0f;
 
@@ -196,6 +194,7 @@ sensor:
             id(last_wind_direction) = dir;
             id(have_wind_data) = true;
 
+        - component.update: m5_display
   # ---------------------------------------------------------------
   # VELOCIDAD DEL VIENTO
   #
@@ -229,17 +228,15 @@ sensor:
               id(last_wind_epoch) =
                 current_time.timestamp;
 
-        - component.update: m5_display
-
   - platform: wifi_signal
     id: wifi_db
     internal: true
-    update_interval: 60s
+    update_interval: 17s
 
   - platform: uptime
     id: uptime_sensor
     internal: true
-    update_interval: 60s
+    update_interval: 17s
 
 # -------------------------------------------------------------------
 # TIME
