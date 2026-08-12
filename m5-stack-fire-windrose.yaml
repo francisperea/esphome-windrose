@@ -117,6 +117,11 @@ globals:
   # No depende del intervalo de adquisición de 17 s.
   # ---------------------------------------------------------------
 
+  - id: first_wind_epoch
+    type: uint32_t
+    restore_value: false
+    initial_value: "0"
+
   - id: last_wind_epoch
     type: uint32_t
     restore_value: false
@@ -177,14 +182,15 @@ sensor:
     id: wind_direction
     entity_id: ${wind_direction_entity}
     internal: true
+
     on_value:
       then:
         - lambda: |-
             if (isnan(x))
               return;
-              
+
             float dir = x;
-            
+
             while (dir < 0.0f)
               dir += 360.0f;
 
@@ -195,15 +201,16 @@ sensor:
             id(have_wind_data) = true;
 
         - component.update: m5_display
+
   # ---------------------------------------------------------------
   # VELOCIDAD DEL VIENTO
   #
-  # Los dos sensores llegan juntos.
+  # Actualiza inmediatamente el valor recibido y guarda el instante
+  # de recepción.
   #
-  # Este callback:
-  #   1. Actualiza la velocidad.
-  #   2. Guarda el instante de recepción.
-  #   3. Redibuja inmediatamente la pantalla.
+  # La pantalla NO se actualiza aquí. El refresco se produce cuando
+  # llega la dirección, evitando dos redibujados para una misma
+  # publicación de la estación.
   # ---------------------------------------------------------------
 
   - platform: homeassistant
@@ -214,7 +221,6 @@ sensor:
     on_value:
       then:
         - lambda: |-
-
             if (isnan(x))
               return;
 
@@ -378,6 +384,25 @@ interval:
           id(sample_pos) =
             (pos + 1) % ${wind_sample_capacity};
 
+          // ---------------------------------------------------------
+          // Actualizar la primera muestra del buffer
+          // ---------------------------------------------------------
+
+          if (id(sample_count) == 1) {
+
+            // Primera muestra almacenada.
+            id(first_wind_epoch) = epoch;
+
+          } else if (id(sample_count) >= ${wind_sample_capacity}) {
+
+            // El buffer está lleno.
+            // sample_pos apunta ahora directamente a la
+            // muestra más antigua.
+
+            id(first_wind_epoch) =
+              id(sample_ts)[id(sample_pos)];
+          }
+
 # -------------------------------------------------------------------
 # BACKLIGHT
 # -------------------------------------------------------------------
@@ -390,6 +415,7 @@ binary_sensor:
     pin:
       number: GPIO39
       inverted: true
+
     on_press:
       then:
         - light.turn_on:
@@ -402,6 +428,7 @@ binary_sensor:
     pin:
       number: GPIO38
       inverted: true
+
     on_press:
       then:
         - light.turn_on:
@@ -414,6 +441,7 @@ binary_sensor:
     pin:
       number: GPIO37
       inverted: true
+
     on_press:
       then:
         - light.turn_on:
@@ -451,7 +479,7 @@ font:
   - file:
       type: gfonts
       family: Open+Sans
-      weight: 600
+      weight: 500
     id: font_title
     size: 20
     bpp: 4
@@ -459,7 +487,7 @@ font:
   - file:
       type: gfonts
       family: Open+Sans
-      weight: 600
+      weight: 500
     id: font_value
     size: 28
     bpp: 4
@@ -467,7 +495,7 @@ font:
   - file:
       type: gfonts
       family: Open+Sans
-      weight: 600
+      weight: 500
     id: font_small
     size: 16
     bpp: 4
@@ -501,7 +529,7 @@ display:
     #
     #   component.update: m5_display
     #
-    # cuando llega un nuevo dato de viento desde Home Assistant.
+    # cuando llega un nuevo dato de dirección desde Home Assistant.
     # ---------------------------------------------------------------
 
     update_interval: never
@@ -612,86 +640,47 @@ display:
       char start_buf[10] = "--:--:--";
       char end_buf[10] = "--:--:--";
 
-      uint32_t start_epoch = 0;
+      uint32_t start_epoch =
+        id(first_wind_epoch);
 
-      int count = id(sample_count);
+      uint32_t end_epoch =
+        id(last_wind_epoch);
 
-      if (count > 0) {
+      if (start_epoch > 0) {
 
-        int oldest_index;
+        time_t start_time =
+          start_epoch;
 
-        if (count < ${wind_sample_capacity})
-          oldest_index = 0;
-        else
-          oldest_index = id(sample_pos);
+        struct tm *start_tm =
+          localtime(&start_time);
 
-        start_epoch =
-          id(sample_ts)[oldest_index];
+        if (start_tm != nullptr) {
 
-        if (start_epoch == 0) {
-
-          for (int i = 0; i < count; i++) {
-
-            int idx =
-              (oldest_index + i) %
-              ${wind_sample_capacity};
-
-            if (id(sample_ts)[idx] > 0) {
-
-              start_epoch =
-                id(sample_ts)[idx];
-
-              break;
-            }
-          }
+          strftime(
+            start_buf,
+            sizeof(start_buf),
+            "%H:%M:%S",
+            start_tm
+          );
         }
+      }
 
-        // ----------------------------------------------------------
-        // La hora final YA NO se obtiene del histórico.
-        //
-        // Se obtiene directamente del último dato recibido
-        // desde Home Assistant.
-        // ----------------------------------------------------------
+      if (end_epoch > 0) {
 
-        uint32_t end_epoch =
-          id(last_wind_epoch);
+        time_t end_time =
+          end_epoch;
 
-        if (start_epoch > 0) {
+        struct tm *end_tm =
+          localtime(&end_time);
 
-          time_t start_time =
-            start_epoch;
+        if (end_tm != nullptr) {
 
-          struct tm *start_tm =
-            localtime(&start_time);
-
-          if (start_tm != nullptr) {
-
-            strftime(
-              start_buf,
-              sizeof(start_buf),
-              "%H:%M:%S",
-              start_tm
-            );
-          }
-        }
-
-        if (end_epoch > 0) {
-
-          time_t end_time =
-            end_epoch;
-
-          struct tm *end_tm =
-            localtime(&end_time);
-
-          if (end_tm != nullptr) {
-
-            strftime(
-              end_buf,
-              sizeof(end_buf),
-              "%H:%M:%S",
-              end_tm
-            );
-          }
+          strftime(
+            end_buf,
+            sizeof(end_buf),
+            "%H:%M:%S",
+            end_tm
+          );
         }
       }
 
@@ -1144,9 +1133,9 @@ display:
         );
       }
 
-      // ============================================================
+      // ==========================================================
       // DIAGNÓSTICO INFERIOR
-      // ============================================================
+      // ==========================================================
 
       it.printf(
         8,
