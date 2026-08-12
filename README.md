@@ -1,22 +1,45 @@
 # ESPHome Windrose para M5Stack Fire
 
-Uso de un M5Stack Fire para presentar los datos de una veleta. 
+Uso de un M5Stack Fire para presentar datos meteorológicos de Home Assistant.
 
 Diseño basado en la tarjeta de Home Assistant https://github.com/aukedejong/lovelace-windrose-card
 
-## 1. Cambia las entidades
+## 1. Configura las entidades
 
-En `m5-stack-fire-windrose-live.yaml`, ajusta estas dos lineas:
+En `m5-stack-fire-windrose.yaml`, ajusta las entidades de `substitutions`:
 
 ```yaml
 substitutions:
   wind_direction_entity: sensor.ecowitt_wind_direction
   wind_speed_entity: sensor.ecowitt_wind_speed
+  temperature_entity: sensor.ecowitt_outdoor_temperature
+  humidity_entity: sensor.ecowitt_humidity
+  rain_rate_entity: sensor.ecowitt_rain_rate
+  rain_today_entity: sensor.ecowitt_rain_today
+  rain_total_entity: sensor.ecowitt_rain_total
 ```
 
-Usa los `entity_id` reales de Home Assistant.
+Usa los `entity_id` reales de Home Assistant. La pantalla espera temperatura
+en °C, humedad en %, y lluvia (tasa, acumulado diario y acumulado total) en
+mm/h o mm, respectivamente.
 
-## 2. Empareja el dispositivo con Home Assistant
+## 2. Pantallas y botones
+
+Los tres botones físicos seleccionan una pantalla y actualizan el display al
+instante:
+
+| Botón | Pantalla |
+| --- | --- |
+| A | Rosa de los vientos original |
+| B | Temperatura y humedad, con gráfica de las últimas 72 muestras válidas |
+| C | Tasa de lluvia, acumulado diario y acumulado total |
+
+Las muestras climáticas se toman cada 17 segundos mientras la API de Home
+Assistant está conectada. Los botones dejan de ajustar el brillo para poder
+dedicarse por completo a la navegación; la retroiluminación permanece
+encendida como antes.
+
+## 3. Empareja el dispositivo con Home Assistant
 
 Los sensores `platform: homeassistant` solo reciben valores cuando Home Assistant esta conectado al dispositivo por la Native API de ESPHome.
 

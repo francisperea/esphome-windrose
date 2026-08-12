@@ -2,6 +2,12 @@ substitutions:
   wind_direction_entity: sensor.estacion_direccion_del_viento
   wind_speed_entity: sensor.estacion_velocidad_del_viento
   wind_sample_capacity: "212"
+  temperature_entity: sensor.estacion_temperatura
+  humidity_entity: sensor.estacion_humedad
+  rain_rate_entity: sensor.estacion_tasa_de_lluvia
+  rain_today_entity: sensor.estacion_lluvia_hoy
+  rain_total_entity: sensor.estacion_lluvia_total
+  climate_sample_capacity: "72"
 
 esphome:
   name: m5-stack-fire
@@ -38,7 +44,7 @@ logger:
 
 api:
   encryption:
-    key: !secret m5_stack_fire__encryption_key
+    key: !secret m5_stack_fire_encryption_key
 
   on_client_connected:
     then:
@@ -160,6 +166,33 @@ globals:
     restore_value: false
     initial_value: "0"
 
+  # ---------------------------------------------------------------
+  # VISTA Y HISTÓRICO CLIMÁTICO
+  # ---------------------------------------------------------------
+
+  - id: active_screen
+    type: uint8_t
+    restore_value: false
+    initial_value: "0"
+
+  - id: climate_sample_count
+    type: int
+    restore_value: false
+    initial_value: "0"
+
+  - id: climate_sample_pos
+    type: int
+    restore_value: false
+    initial_value: "0"
+
+  - id: climate_temperature
+    type: float[${climate_sample_capacity}]
+    restore_value: false
+
+  - id: climate_humidity
+    type: float[${climate_sample_capacity}]
+    restore_value: false
+
 # -------------------------------------------------------------------
 # HOME ASSISTANT SENSORS
 # -------------------------------------------------------------------
@@ -218,6 +251,55 @@ sensor:
             if (current_time.is_valid())
               id(last_wind_epoch) =
                 current_time.timestamp;
+
+  # ---------------------------------------------------------------
+  # CLIMA Y LLUVIA
+  # ---------------------------------------------------------------
+
+  - platform: homeassistant
+    id: temperature
+    entity_id: ${temperature_entity}
+    internal: true
+
+    on_value:
+      then:
+        - component.update: m5_display
+
+  - platform: homeassistant
+    id: humidity
+    entity_id: ${humidity_entity}
+    internal: true
+
+    on_value:
+      then:
+        - component.update: m5_display
+
+  - platform: homeassistant
+    id: rain_rate
+    entity_id: ${rain_rate_entity}
+    internal: true
+
+    on_value:
+      then:
+        - component.update: m5_display
+
+  - platform: homeassistant
+    id: rain_today
+    entity_id: ${rain_today_entity}
+    internal: true
+
+    on_value:
+      then:
+        - component.update: m5_display
+
+  - platform: homeassistant
+    id: rain_total
+    entity_id: ${rain_total_entity}
+    internal: true
+
+    on_value:
+      then:
+        - component.update: m5_display
 
   - platform: wifi_signal
     id: wifi_db
@@ -405,8 +487,34 @@ interval:
               id(sample_ts)[id(sample_pos)];
           }
 
+      - component.update: m5_display
+
+  - interval: 17s
+    then:
+      - lambda: |-
+          if (!id(ha_api_connected) ||
+              isnan(id(temperature).state) ||
+              isnan(id(humidity).state))
+            return;
+
+          int climate_pos = id(climate_sample_pos);
+
+          id(climate_temperature)[climate_pos] =
+            id(temperature).state;
+          id(climate_humidity)[climate_pos] =
+            id(humidity).state;
+
+          if (id(climate_sample_count) <
+              ${climate_sample_capacity})
+            id(climate_sample_count)++;
+
+          id(climate_sample_pos) =
+            (climate_pos + 1) % ${climate_sample_capacity};
+
+      - component.update: m5_display
+
 # -------------------------------------------------------------------
-# BACKLIGHT
+# BUTTONS AND BACKLIGHT
 # -------------------------------------------------------------------
 
 binary_sensor:
@@ -420,9 +528,9 @@ binary_sensor:
 
     on_press:
       then:
-        - light.turn_on:
-            id: display_backlight
-            brightness: 35%
+        - lambda: |-
+            id(active_screen) = 0;
+        - component.update: m5_display
 
   - platform: gpio
     id: button_b
@@ -433,9 +541,9 @@ binary_sensor:
 
     on_press:
       then:
-        - light.turn_on:
-            id: display_backlight
-            brightness: 70%
+        - lambda: |-
+            id(active_screen) = 1;
+        - component.update: m5_display
 
   - platform: gpio
     id: button_c
@@ -446,9 +554,9 @@ binary_sensor:
 
     on_press:
       then:
-        - light.turn_on:
-            id: display_backlight
-            brightness: 100%
+        - lambda: |-
+            id(active_screen) = 2;
+        - component.update: m5_display
 
 output:
 
@@ -554,6 +662,417 @@ display:
 
       const auto red =
         Color(255, 0, 0);
+
+      // ============================================================
+      // CLIMATE SCREEN
+      // ============================================================
+
+      if (id(active_screen) == 1) {
+
+        const auto temperature_color =
+          Color(235, 120, 25);
+        const auto humidity_color =
+          Color(35, 130, 220);
+
+        it.fill(bg);
+
+        it.print(
+          160, 4,
+          id(font_title),
+          text,
+          TextAlign::TOP_CENTER,
+          "Climate"
+        );
+
+        it.print(
+          20, 35,
+          id(font_small),
+          muted,
+          "Temperature"
+        );
+
+        if (isnan(id(temperature).state)) {
+          it.print(
+            20, 53,
+            id(font_value),
+            text,
+            "--"
+          );
+        } else {
+          it.printf(
+            20, 53,
+            id(font_value),
+            temperature_color,
+            "%.1f C",
+            id(temperature).state
+          );
+        }
+
+        it.print(
+          184, 35,
+          id(font_small),
+          muted,
+          "Humidity"
+        );
+
+        if (isnan(id(humidity).state)) {
+          it.print(
+            184, 53,
+            id(font_value),
+            text,
+            "--"
+          );
+        } else {
+          it.printf(
+            184, 53,
+            id(font_value),
+            humidity_color,
+            "%.0f%%",
+            id(humidity).state
+          );
+        }
+
+        const int graph_x = 24;
+        const int graph_y = 111;
+        const int graph_width = 272;
+        const int graph_height = 74;
+        const int climate_count =
+          id(climate_sample_count);
+
+        it.rectangle(
+          graph_x,
+          graph_y,
+          graph_width,
+          graph_height,
+          grid
+        );
+
+        for (int i = 1; i < 4; i++) {
+          int y =
+            graph_y + (graph_height * i) / 4;
+
+          it.line(
+            graph_x,
+            y,
+            graph_x + graph_width,
+            y,
+            radial
+          );
+        }
+
+        if (climate_count > 0) {
+          const int climate_start =
+            climate_count >= ${climate_sample_capacity}
+              ? id(climate_sample_pos)
+              : 0;
+
+          float minimum_temperature =
+            id(climate_temperature)[climate_start];
+          float maximum_temperature =
+            minimum_temperature;
+
+          for (int i = 1; i < climate_count; i++) {
+            int index =
+              (climate_start + i) %
+              ${climate_sample_capacity};
+            float sample_temperature =
+              id(climate_temperature)[index];
+
+            if (sample_temperature < minimum_temperature)
+              minimum_temperature = sample_temperature;
+            if (sample_temperature > maximum_temperature)
+              maximum_temperature = sample_temperature;
+          }
+
+          if (maximum_temperature -
+              minimum_temperature < 4.0f) {
+            float middle =
+              (maximum_temperature +
+               minimum_temperature) / 2.0f;
+            minimum_temperature = middle - 2.0f;
+            maximum_temperature = middle + 2.0f;
+          } else {
+            minimum_temperature -= 1.0f;
+            maximum_temperature += 1.0f;
+          }
+
+          it.printf(
+            graph_x,
+            graph_y - 14,
+            id(font_small),
+            muted,
+            "%.1f C",
+            maximum_temperature
+          );
+
+          it.print(
+            graph_x + graph_width,
+            graph_y - 14,
+            id(font_small),
+            muted,
+            TextAlign::TOP_RIGHT,
+            "100%"
+          );
+
+          it.printf(
+            graph_x,
+            graph_y + graph_height + 2,
+            id(font_small),
+            muted,
+            "%.1f C",
+            minimum_temperature
+          );
+
+          it.print(
+            graph_x + graph_width,
+            graph_y + graph_height + 2,
+            id(font_small),
+            muted,
+            TextAlign::TOP_RIGHT,
+            "0%"
+          );
+
+          for (int i = 1; i < climate_count; i++) {
+            int previous_index =
+              (climate_start + i - 1) %
+              ${climate_sample_capacity};
+            int current_index =
+              (climate_start + i) %
+              ${climate_sample_capacity};
+
+            float previous_temperature =
+              id(climate_temperature)[previous_index];
+            float current_temperature =
+              id(climate_temperature)[current_index];
+            float previous_humidity =
+              id(climate_humidity)[previous_index];
+            float current_humidity =
+              id(climate_humidity)[current_index];
+
+            int x1 =
+              graph_x + ((i - 1) * graph_width) /
+              (climate_count - 1);
+            int x2 =
+              graph_x + (i * graph_width) /
+              (climate_count - 1);
+            int temperature_y1 =
+              graph_y + graph_height - lroundf(
+                (previous_temperature -
+                 minimum_temperature) * graph_height /
+                (maximum_temperature -
+                 minimum_temperature)
+              );
+            int temperature_y2 =
+              graph_y + graph_height - lroundf(
+                (current_temperature -
+                 minimum_temperature) * graph_height /
+                (maximum_temperature -
+                 minimum_temperature)
+              );
+            int humidity_y1 =
+              graph_y + graph_height - lroundf(
+                previous_humidity * graph_height / 100.0f
+              );
+            int humidity_y2 =
+              graph_y + graph_height - lroundf(
+                current_humidity * graph_height / 100.0f
+              );
+
+            it.line(
+              x1,
+              temperature_y1,
+              x2,
+              temperature_y2,
+              temperature_color
+            );
+            it.line(
+              x1,
+              humidity_y1,
+              x2,
+              humidity_y2,
+              humidity_color
+            );
+          }
+        } else {
+          it.print(
+            160, 145,
+            id(font_small),
+            muted,
+            TextAlign::CENTER,
+            "Waiting for Home Assistant data"
+          );
+        }
+
+        it.print(
+          160, 218,
+          id(font_small),
+          muted,
+          TextAlign::TOP_CENTER,
+          "A Wind  |  B Climate  |  C Rain"
+        );
+
+        return;
+      }
+
+      // ============================================================
+      // RAIN SCREEN
+      // ============================================================
+
+      if (id(active_screen) == 2) {
+
+        const auto rain_color =
+          Color(35, 130, 220);
+
+        it.fill(bg);
+
+        it.print(
+          160, 4,
+          id(font_title),
+          text,
+          TextAlign::TOP_CENTER,
+          "Rain"
+        );
+
+        it.print(
+          20, 38,
+          id(font_small),
+          muted,
+          "Rain rate"
+        );
+
+        if (isnan(id(rain_rate).state)) {
+          it.print(
+            20, 56,
+            id(font_value),
+            text,
+            "--"
+          );
+        } else {
+          it.printf(
+            20, 56,
+            id(font_value),
+            rain_color,
+            "%.1f mm/h",
+            id(rain_rate).state
+          );
+        }
+
+        it.print(
+          180, 38,
+          id(font_small),
+          muted,
+          "Today"
+        );
+
+        if (isnan(id(rain_today).state)) {
+          it.print(
+            180, 56,
+            id(font_value),
+            text,
+            "--"
+          );
+        } else {
+          it.printf(
+            180, 56,
+            id(font_value),
+            rain_color,
+            "%.1f mm",
+            id(rain_today).state
+          );
+        }
+
+        const int bar_x = 20;
+        const int bar_y = 111;
+        const int bar_width = 280;
+        const int bar_height = 22;
+
+        it.print(
+          bar_x,
+          bar_y - 23,
+          id(font_small),
+          muted,
+          "Current intensity (0-20 mm/h)"
+        );
+
+        it.rectangle(
+          bar_x,
+          bar_y,
+          bar_width,
+          bar_height,
+          grid
+        );
+
+        if (!isnan(id(rain_rate).state)) {
+          float rate =
+            id(rain_rate).state;
+
+          if (rate < 0.0f)
+            rate = 0.0f;
+          if (rate > 20.0f)
+            rate = 20.0f;
+
+          int filled_width =
+            lroundf(rate * bar_width / 20.0f);
+
+          it.filled_rectangle(
+            bar_x,
+            bar_y,
+            filled_width,
+            bar_height,
+            rain_color
+          );
+        }
+
+        it.print(
+          bar_x,
+          bar_y + bar_height + 4,
+          id(font_small),
+          muted,
+          "0"
+        );
+        it.print(
+          bar_x + bar_width,
+          bar_y + bar_height + 4,
+          id(font_small),
+          muted,
+          TextAlign::TOP_RIGHT,
+          "20"
+        );
+
+        it.print(
+          20, 169,
+          id(font_small),
+          muted,
+          "Accumulated total"
+        );
+
+        if (isnan(id(rain_total).state)) {
+          it.print(
+            20, 187,
+            id(font_value),
+            text,
+            "--"
+          );
+        } else {
+          it.printf(
+            20, 187,
+            id(font_value),
+            rain_color,
+            "%.1f mm",
+            id(rain_total).state
+          );
+        }
+
+        it.print(
+          160, 218,
+          id(font_small),
+          muted,
+          TextAlign::TOP_CENTER,
+          "A Wind  |  B Climate  |  C Rain"
+        );
+
+        return;
+      }
 
       // ============================================================
       // GEOMETRÍA
