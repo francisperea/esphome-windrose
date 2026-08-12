@@ -23,9 +23,6 @@ esp32:
 
 # -------------------------------------------------------------------
 # PSRAM
-#
-# El M5Stack Fire dispone de PSRAM.
-# La usamos para el framebuffer completo del display.
 # -------------------------------------------------------------------
 
 psram:
@@ -111,10 +108,7 @@ globals:
     initial_value: "false"
 
   # ---------------------------------------------------------------
-  # INSTANTE DE RECEPCIÓN DEL ÚLTIMO DATO DE VIENTO
-  #
-  # Se actualiza directamente cuando llega el dato desde HA.
-  # No depende del intervalo de adquisición de 17 s.
+  # TIMESTAMPS
   # ---------------------------------------------------------------
 
   - id: first_wind_epoch
@@ -174,8 +168,6 @@ sensor:
 
   # ---------------------------------------------------------------
   # DIRECCIÓN DEL VIENTO
-  #
-  # Actualiza inmediatamente el valor mostrado.
   # ---------------------------------------------------------------
 
   - platform: homeassistant
@@ -204,13 +196,6 @@ sensor:
 
   # ---------------------------------------------------------------
   # VELOCIDAD DEL VIENTO
-  #
-  # Actualiza inmediatamente el valor recibido y guarda el instante
-  # de recepción.
-  #
-  # La pantalla NO se actualiza aquí. El refresco se produce cuando
-  # llega la dirección, evitando dos redibujados para una misma
-  # publicación de la estación.
   # ---------------------------------------------------------------
 
   - platform: homeassistant
@@ -320,7 +305,7 @@ interval:
             int((dir + 11.25f) / 22.5f) % 16;
 
           // ---------------------------------------------------------
-          // Timestamp
+          // Timestamp de la muestra
           // ---------------------------------------------------------
 
           auto current_time = id(ha_time).now();
@@ -331,10 +316,19 @@ interval:
             epoch = current_time.timestamp;
 
           // ---------------------------------------------------------
-          // Buffer circular
+          // POSICIÓN ACTUAL DEL BUFFER
+          //
+          // Si el buffer está lleno, esta posición contiene la
+          // muestra más antigua y será sustituida.
           // ---------------------------------------------------------
 
           int pos = id(sample_pos);
+
+          // ---------------------------------------------------------
+          // Si el buffer está lleno:
+          // eliminar de los contadores la muestra que vamos a
+          // sustituir.
+          // ---------------------------------------------------------
 
           if (id(sample_count) >= ${wind_sample_capacity}) {
 
@@ -353,14 +347,17 @@ interval:
             if (old_bft == 0 &&
                 id(calm_count) > 0)
               id(calm_count)--;
-
-          } else {
-
-            id(sample_count)++;
           }
 
           // ---------------------------------------------------------
-          // Guardar muestra
+          // Si todavía no está lleno, aumentar número de muestras.
+          // ---------------------------------------------------------
+
+          if (id(sample_count) < ${wind_sample_capacity})
+            id(sample_count)++;
+
+          // ---------------------------------------------------------
+          // Guardar nueva muestra
           // ---------------------------------------------------------
 
           id(sample_sector)[pos] = sector;
@@ -378,26 +375,31 @@ interval:
             id(calm_count)++;
 
           // ---------------------------------------------------------
-          // Siguiente posición
+          // Avanzar posición del buffer circular.
+          //
+          // Si estaba lleno, ahora apunta a la nueva muestra más
+          // antigua del buffer.
           // ---------------------------------------------------------
 
           id(sample_pos) =
             (pos + 1) % ${wind_sample_capacity};
 
           // ---------------------------------------------------------
-          // Actualizar la primera muestra del buffer
+          // ACTUALIZAR INICIO DEL PERIODO
+          //
+          // Mientras el buffer no esté lleno, la primera muestra
+          // está en la posición 0.
+          //
+          // Cuando está lleno, sample_pos apunta a la muestra más
+          // antigua.
           // ---------------------------------------------------------
 
-          if (id(sample_count) == 1) {
+          if (id(sample_count) < ${wind_sample_capacity}) {
 
-            // Primera muestra almacenada.
-            id(first_wind_epoch) = epoch;
+            id(first_wind_epoch) =
+              id(sample_ts)[0];
 
-          } else if (id(sample_count) >= ${wind_sample_capacity}) {
-
-            // El buffer está lleno.
-            // sample_pos apunta ahora directamente a la
-            // muestra más antigua.
+          } else {
 
             id(first_wind_epoch) =
               id(sample_ts)[id(sample_pos)];
@@ -521,16 +523,6 @@ display:
     auto_clear_enabled: true
 
     buffer_size: 100%
-
-    # ---------------------------------------------------------------
-    # La pantalla NO se actualiza periódicamente.
-    #
-    # Se actualiza exclusivamente mediante:
-    #
-    #   component.update: m5_display
-    #
-    # cuando llega un nuevo dato de dirección desde Home Assistant.
-    # ---------------------------------------------------------------
 
     update_interval: never
 
@@ -743,9 +735,9 @@ display:
         speed
       );
 
-      // ==========================================================
+      // ============================================================
       // ROSA DE LOS VIENTOS
-      // ==========================================================
+      // ============================================================
 
       it.circle(
         cx, cy, r,
@@ -1105,9 +1097,9 @@ display:
         );
       }
 
-      // ==========================================================
+      // ============================================================
       // MARCADOR BEAUFORT
-      // ==========================================================
+      // ============================================================
 
       int marker_y =
         bar_y +
@@ -1133,9 +1125,9 @@ display:
         );
       }
 
-      // ==========================================================
+      // ============================================================
       // DIAGNÓSTICO INFERIOR
-      // ==========================================================
+      // ============================================================
 
       it.printf(
         8,
