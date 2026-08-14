@@ -2,10 +2,10 @@ substitutions:
   wind_direction_entity: sensor.estacion_direccion_del_viento
   wind_speed_entity: sensor.estacion_velocidad_del_viento
   wind_sample_capacity: "212"
-  temperature_entity: sensor.estacion_temperatura
-  humidity_entity: sensor.estacion_humedad
-  rain_rate_entity: sensor.estacion_tasa_de_lluvia
-  rain_today_entity: sensor.estacion_lluvia_hoy
+  temperature_entity: sensor.estacion_temperatura_exterior
+  humidity_entity: sensor.estacion_humedad_exterior
+  rain_rate_entity: sensor.estacion_tasa_de_lluvia_por_hora
+  rain_today_entity: sensor.estacion_lluvia_24h
   rain_total_entity: sensor.estacion_lluvia_total
   climate_sample_capacity: "72"
 
@@ -59,10 +59,8 @@ api:
 
 ota:
   - platform: esphome
-
   - platform: http_request
     id: ota_http_request_1
-
   - platform: web_server
 
 web_server:
@@ -270,9 +268,9 @@ sensor:
     entity_id: ${humidity_entity}
     internal: true
 
-    on_value:
-      then:
-        - component.update: m5_display
+  #  on_value:
+  #    then:
+  #      - component.update: m5_display
 
   - platform: homeassistant
     id: rain_rate
@@ -288,18 +286,18 @@ sensor:
     entity_id: ${rain_today_entity}
     internal: true
 
-    on_value:
-      then:
-        - component.update: m5_display
+  #  on_value:
+  #    then:
+  #      - component.update: m5_display
 
   - platform: homeassistant
     id: rain_total
     entity_id: ${rain_total_entity}
     internal: true
 
-    on_value:
-      then:
-        - component.update: m5_display
+   # on_value:
+   #   then:
+   #     - component.update: m5_display
 
   - platform: wifi_signal
     id: wifi_db
