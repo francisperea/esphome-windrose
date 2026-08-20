@@ -731,6 +731,10 @@ display:
 
         it.fill(bg);
 
+        // ============================================================
+        // MEDIDAS ACTUALES
+        // ============================================================
+
         it.print(
           20, 4,
           id(font_small),
@@ -871,6 +875,10 @@ display:
           );
         }
 
+        // ============================================================
+        // GRÁFICA DE LAS ÚLTIMAS 12 HORAS
+        // ============================================================
+
         const int graph_x = 12;
         const int graph_y = 140;
         const int graph_width = 296;
@@ -909,6 +917,10 @@ display:
         }
 
         if (climate_count > 0) {
+          // ----------------------------------------------------------
+          // RANGO DE TEMPERATURA Y SERIES
+          // ----------------------------------------------------------
+
           const int climate_start =
             climate_count >= ${sample_capacity}
               ? id(climate_sample_pos)
@@ -1067,6 +1079,10 @@ display:
 
         it.fill(bg);
 
+        // ============================================================
+        // ACUMULADOS Y MEDIDAS DE LLUVIA
+        // ============================================================
+
         it.print(
           12, 4,
           id(font_small),
@@ -1206,6 +1222,10 @@ display:
             id(barometer).state
           );
         }
+
+        // ============================================================
+        // INTENSIDAD ACTUAL
+        // ============================================================
 
         const int bar_x = 20;
         const int bar_y = 160;
@@ -1830,10 +1850,10 @@ display:
       // ==========================================================
 
       const int bar_x = 10;
-      const int bar_y = 200;
+      const int bar_y = 195;
       const int bar_w = 300;
       const int band_w = bar_w / 13;
-      const int band_h = 22;
+      const int band_h = 17;
 
       for (int bb = 0; bb <= 12; bb++) {
 

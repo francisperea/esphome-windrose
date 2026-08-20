@@ -20,8 +20,7 @@ substitutions:
   solar_radiation_entity: sensor.ecowitt_solar_radiation
   uv_index_entity: sensor.ecowitt_uv_index
   solar_radiation_max_entity: sensor.ecowitt_max_solar_radiation
-  rain_rate_entity: sensor.ecowitt_rain_rate
-  rain_rate_hour_entity: sensor.ecowitt_rain_rate_hour
+  rain_rate_entity: sensor.ecowitt_rain_rate_hour
   rain_last_hour_entity: sensor.ecowitt_rain_last_hour
   rain_24h_entity: sensor.ecowitt_rain_24h
   rain_total_entity: sensor.ecowitt_rain_total
