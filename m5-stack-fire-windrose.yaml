@@ -76,6 +76,69 @@ runtime_stats:
   log_interval: 60s
 
 http_request:
+  
+output:
+
+  - platform: ledc
+    pin: GPIO32
+    id: backlight
+
+light:
+
+  - platform: monochromatic
+    id: display_backlight
+    internal: true
+    output: backlight
+    restore_mode: ALWAYS_ON
+
+spi:
+      clk_pin: GPIO18
+      mosi_pin: GPIO23
+    
+font:
+
+  - file:
+      type: gfonts
+      family: Open+Sans
+      weight: 500
+    id: font_title
+    size: 20
+    bpp: 4
+
+  - file:
+      type: gfonts
+      family: Open+Sans
+      weight: 500
+    id: font_value
+    size: 28
+    bpp: 4
+
+  - file:
+      type: gfonts
+      family: Open+Sans
+      weight: 500
+    id: font_small
+    size: 16
+    bpp: 4
+  
+time:
+  
+  - platform: homeassistant
+    id: ha_time
+    on_time_sync:
+      then:
+        - script.execute: update_backlight
+    on_time:
+      - hours: 23
+        minutes: 30
+        seconds: 0
+        then:
+          - script.execute: update_backlight
+      - hours: 7
+        minutes: 30
+        seconds: 0
+        then:
+          - script.execute: update_backlight
 
 globals:
 
@@ -302,25 +365,6 @@ sensor:
     internal: true
     update_interval: 17s
 
-time:
-
-  - platform: homeassistant
-    id: ha_time
-    on_time_sync:
-      then:
-        - script.execute: update_backlight
-    on_time:
-      - hours: 23
-        minutes: 30
-        seconds: 0
-        then:
-          - script.execute: update_backlight
-      - hours: 7
-        minutes: 30
-        seconds: 0
-        then:
-          - script.execute: update_backlight
-
 text_sensor:
 
   - platform: homeassistant
@@ -496,9 +540,6 @@ interval:
               id(sample_ts)[id(sample_pos)];
           }
 
-  - interval: 17s
-    then:
-      - lambda: |-
           if (!id(ha_api_connected) ||
               isnan(id(temperature).state) ||
               isnan(id(humidity).state))
@@ -559,20 +600,6 @@ binary_sensor:
             id(active_screen) = 0;
         - component.update: m5_display
 
-output:
-
-  - platform: ledc
-    pin: GPIO32
-    id: backlight
-
-light:
-
-  - platform: monochromatic
-    id: display_backlight
-    internal: true
-    output: backlight
-    restore_mode: ALWAYS_ON
-
 script:
 
   - id: update_backlight
@@ -598,36 +625,6 @@ script:
             - light.turn_on:
                 id: display_backlight
                 brightness: 100%
-
-spi:
-  clk_pin: GPIO18
-  mosi_pin: GPIO23
-
-font:
-
-  - file:
-      type: gfonts
-      family: Open+Sans
-      weight: 500
-    id: font_title
-    size: 20
-    bpp: 4
-
-  - file:
-      type: gfonts
-      family: Open+Sans
-      weight: 500
-    id: font_value
-    size: 28
-    bpp: 4
-
-  - file:
-      type: gfonts
-      family: Open+Sans
-      weight: 500
-    id: font_small
-    size: 16
-    bpp: 4
 
 display:
 
@@ -783,21 +780,21 @@ display:
         }
 
         it.print(
-          20, 55,
+          20, 50,
           id(font_small),
           muted,
           "Apparent"
         );
         if (isnan(id(apparent_temperature).state)) {
           it.print(
-            20, 72,
+            20, 67,
             id(font_title),
             text,
             "--"
           );
         } else {
           it.printf(
-            20, 72,
+            20, 67,
             id(font_title),
             text,
             "%.1f C",
@@ -806,21 +803,21 @@ display:
         }
 
         it.print(
-          172, 55,
+          172, 50,
           id(font_small),
           muted,
           "Solar radiation"
         );
         if (isnan(id(solar_radiation).state)) {
           it.print(
-            172, 72,
+            172, 67,
             id(font_title),
             text,
             "--"
           );
         } else {
           it.printf(
-            172, 72,
+            172, 67,
             id(font_title),
             text,
             "%.0f W/m2",
@@ -874,10 +871,10 @@ display:
           );
         }
 
-        const int graph_x = 24;
-        const int graph_y = 145;
-        const int graph_width = 272;
-        const int graph_height = 53;
+        const int graph_x = 12;
+        const int graph_y = 140;
+        const int graph_width = 296;
+        const int graph_height = 60;
         const int climate_count =
           id(climate_sample_count);
 
@@ -1211,13 +1208,13 @@ display:
         }
 
         const int bar_x = 20;
-        const int bar_y = 174;
+        const int bar_y = 160;
         const int bar_width = 280;
-        const int bar_height = 17;
+        const int bar_height = 30;
 
         it.print(
           bar_x,
-          bar_y - 17,
+          bar_y - 25,
           id(font_small),
           muted,
           "Current intensity (0-20 mm/h)"
@@ -1279,7 +1276,7 @@ display:
 
       const int cx = 160;
       const int cy = 110;
-      const int r = 49;
+      const int r = 60;
 
       // ============================================================
       // BEAUFORT
@@ -1419,7 +1416,7 @@ display:
         8, 4,
         id(font_small),
         text,
-        "%s-%s R:%s S:%s",
+        "%s-%s     R:%s - S:%s",
         start_buf,
         end_buf,
         sunrise_buf,
@@ -1494,7 +1491,7 @@ display:
       }
 
       it.print(
-        210, 141,
+        220, 141,
         id(font_small),
         text,
         "Cloud base"
@@ -1502,7 +1499,7 @@ display:
 
       if (isnan(id(cloud_base).state)) {
         it.print(
-          210, 157,
+          220, 157,
           id(font_value),
           text,
           "--"
@@ -1824,7 +1821,7 @@ display:
         id(font_small),
         bg,
         TextAlign::CENTER,
-        "%d%%",
+        "%d",
         center_pct
       );
 
@@ -1833,10 +1830,10 @@ display:
       // ==========================================================
 
       const int bar_x = 10;
-      const int bar_y = 195;
+      const int bar_y = 200;
       const int bar_w = 300;
       const int band_w = bar_w / 13;
-      const int band_h = 17;
+      const int band_h = 22;
 
       for (int bb = 0; bb <= 12; bb++) {
 
@@ -1861,7 +1858,7 @@ display:
 
         it.printf(
           x + band_w / 2,
-          bar_y + 1,
+          bar_y,
           id(font_small),
           text,
           TextAlign::TOP_CENTER,
