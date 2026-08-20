@@ -45,7 +45,7 @@ logger:
 
 api:
   encryption:
-    key: !secret m5_stack_fire_encryption_key
+    key: !secret m5_stack_fire__encryption_key
 
   on_client_connected:
     then:
