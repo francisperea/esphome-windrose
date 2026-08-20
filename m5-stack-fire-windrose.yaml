@@ -274,14 +274,14 @@ sensor:
     entity_id: ${rain_rate_entity}
     internal: true
 
+    on_value:
+      then:
+        - component.update: m5_display
+
   - platform: homeassistant
     id: rain_last_hour
     entity_id: ${rain_last_hour_entity}
     internal: true
-
-    on_value:
-      then:
-        - component.update: m5_display
 
   - platform: homeassistant
     id: rain_24h
@@ -497,8 +497,6 @@ interval:
               id(sample_ts)[id(sample_pos)];
           }
 
-      - component.update: m5_display
-
   - interval: 17s
     then:
       - lambda: |-
@@ -520,8 +518,6 @@ interval:
 
           id(climate_sample_pos) =
             (climate_pos + 1) % ${sample_capacity};
-
-      - component.update: m5_display
 
 binary_sensor:
 
