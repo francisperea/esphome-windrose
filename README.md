@@ -63,13 +63,13 @@ Si usas cifrado, el bloque debe quedar asi:
 ```yaml
 api:
   encryption:
-    key: !secret m5_stack_fire_encryption_key
+    key: !secret m5_stack_fire__encryption_key
 ```
 
 Y en `secrets.yaml` debe existir esa clave:
 
 ```yaml
-m5_stack_fire_encryption_key: "TU_CLAVE_GENERADA"
+m5_stack_fire__encryption_key: "TU_CLAVE_GENERADA"
 ```
 
 Despues de compilar y subir el firmware:

@@ -791,14 +791,14 @@ display:
         if (isnan(id(apparent_temperature).state)) {
           it.print(
             20, 72,
-            id(font_small),
+            id(font_title),
             text,
             "--"
           );
         } else {
           it.printf(
             20, 72,
-            id(font_small),
+            id(font_title),
             text,
             "%.1f C",
             id(apparent_temperature).state
@@ -814,14 +814,14 @@ display:
         if (isnan(id(solar_radiation).state)) {
           it.print(
             172, 72,
-            id(font_small),
+            id(font_title),
             text,
             "--"
           );
         } else {
           it.printf(
             172, 72,
-            id(font_small),
+            id(font_title),
             text,
             "%.0f W/m2",
             id(solar_radiation).state
@@ -836,15 +836,15 @@ display:
         );
         if (isnan(id(uv_index).state)) {
           it.print(
-            20, 106,
-            id(font_small),
+            20, 104,
+            id(font_title),
             text,
             "--"
           );
         } else {
           it.printf(
-            20, 106,
-            id(font_small),
+            20, 104,
+            id(font_title),
             text,
             "%.1f",
             id(uv_index).state
@@ -859,15 +859,15 @@ display:
         );
         if (isnan(id(solar_radiation_max).state)) {
           it.print(
-            172, 106,
-            id(font_small),
+            172, 104,
+            id(font_title),
             text,
             "--"
           );
         } else {
           it.printf(
-            172, 106,
-            id(font_small),
+            172, 104,
+            id(font_title),
             text,
             "%.0f W/m2",
             id(solar_radiation_max).state
@@ -875,9 +875,9 @@ display:
         }
 
         const int graph_x = 24;
-        const int graph_y = 128;
+        const int graph_y = 145;
         const int graph_width = 272;
-        const int graph_height = 61;
+        const int graph_height = 53;
         const int climate_count =
           id(climate_sample_count);
 
@@ -1046,7 +1046,7 @@ display:
           }
         } else {
           it.print(
-            160, 158,
+            160, 170,
             id(font_small),
             muted,
             TextAlign::CENTER,
@@ -1080,14 +1080,14 @@ display:
         if (isnan(id(rain_rate).state)) {
           it.print(
             12, 21,
-            id(font_small),
+            id(font_title),
             text,
             "--"
           );
         } else {
           it.printf(
             12, 21,
-            id(font_small),
+            id(font_title),
             rain_color,
             "%.1f mm/h",
             id(rain_rate).state
@@ -1104,14 +1104,14 @@ display:
         if (isnan(id(rain_last_hour).state)) {
           it.print(
             164, 21,
-            id(font_small),
+            id(font_title),
             text,
             "--"
           );
         } else {
           it.printf(
             164, 21,
-            id(font_small),
+            id(font_title),
             rain_color,
             "%.1f mm",
             id(rain_last_hour).state
@@ -1119,22 +1119,22 @@ display:
         }
 
         it.print(
-          12, 38,
+          12, 47,
           id(font_small),
           muted,
           "Rain 24 h"
         );
         if (isnan(id(rain_24h).state)) {
           it.print(
-            12, 55,
-            id(font_small),
+            12, 64,
+            id(font_title),
             text,
             "--"
           );
         } else {
           it.printf(
-            12, 55,
-            id(font_small),
+            12, 64,
+            id(font_title),
             rain_color,
             "%.1f mm",
             id(rain_24h).state
@@ -1142,22 +1142,22 @@ display:
         }
 
         it.print(
-          164, 38,
+          164, 47,
           id(font_small),
           muted,
           "Rain total"
         );
         if (isnan(id(rain_total).state)) {
           it.print(
-            164, 55,
-            id(font_small),
+            164, 64,
+            id(font_title),
             text,
             "--"
           );
         } else {
           it.printf(
-            164, 55,
-            id(font_small),
+            164, 64,
+            id(font_title),
             rain_color,
             "%.1f mm",
             id(rain_total).state
@@ -1165,22 +1165,22 @@ display:
         }
 
         it.print(
-          12, 72,
+          12, 90,
           id(font_small),
           muted,
           "Cloud base"
         );
         if (isnan(id(cloud_base).state)) {
           it.print(
-            12, 89,
-            id(font_small),
+            12, 107,
+            id(font_title),
             text,
             "--"
           );
         } else {
           it.printf(
-            12, 89,
-            id(font_small),
+            12, 107,
+            id(font_title),
             text,
             "%.0f m",
             id(cloud_base).state
@@ -1188,22 +1188,22 @@ display:
         }
 
         it.print(
-          164, 72,
+          164, 90,
           id(font_small),
           muted,
           "Barometer"
         );
         if (isnan(id(barometer).state)) {
           it.print(
-            164, 89,
-            id(font_small),
+            164, 107,
+            id(font_title),
             text,
             "--"
           );
         } else {
           it.printf(
-            164, 89,
-            id(font_small),
+            164, 107,
+            id(font_title),
             text,
             "%.0f mbar",
             id(barometer).state
@@ -1211,13 +1211,13 @@ display:
         }
 
         const int bar_x = 20;
-        const int bar_y = 151;
+        const int bar_y = 174;
         const int bar_width = 280;
-        const int bar_height = 22;
+        const int bar_height = 17;
 
         it.print(
           bar_x,
-          bar_y - 19,
+          bar_y - 17,
           id(font_small),
           muted,
           "Current intensity (0-20 mm/h)"
@@ -1278,7 +1278,7 @@ display:
       // ============================================================
 
       const int cx = 160;
-      const int cy = 121;
+      const int cy = 110;
       const int r = 49;
 
       // ============================================================
@@ -1470,7 +1470,7 @@ display:
       );
 
       it.print(
-        8, 150,
+        8, 141,
         id(font_small),
         text,
         "Wind gust"
@@ -1478,15 +1478,15 @@ display:
 
       if (isnan(id(wind_gust).state)) {
         it.print(
-          8, 166,
-          id(font_small),
+          8, 157,
+          id(font_value),
           text,
           "--"
         );
       } else {
         it.printf(
-          8, 166,
-          id(font_small),
+          8, 157,
+          id(font_value),
           text,
           "%.2f kt",
           id(wind_gust).state
@@ -1494,7 +1494,7 @@ display:
       }
 
       it.print(
-        218, 150,
+        210, 141,
         id(font_small),
         text,
         "Cloud base"
@@ -1502,15 +1502,15 @@ display:
 
       if (isnan(id(cloud_base).state)) {
         it.print(
-          218, 166,
-          id(font_small),
+          210, 157,
+          id(font_value),
           text,
           "--"
         );
       } else {
         it.printf(
-          218, 166,
-          id(font_small),
+          210, 157,
+          id(font_value),
           text,
           "%.0f m",
           id(cloud_base).state
@@ -1833,10 +1833,10 @@ display:
       // ==========================================================
 
       const int bar_x = 10;
-      const int bar_y = 186;
+      const int bar_y = 195;
       const int bar_w = 300;
       const int band_w = bar_w / 13;
-      const int band_h = 19;
+      const int band_h = 17;
 
       for (int bb = 0; bb <= 12; bb++) {
 
@@ -1881,7 +1881,7 @@ display:
 
         it.line(
           marker_x - 6 + i,
-          bar_y - 9,
+          bar_y - 8,
           marker_x,
           bar_y - 1,
           red
@@ -1889,7 +1889,7 @@ display:
 
         it.line(
           marker_x + 6 - i,
-          bar_y - 9,
+          bar_y - 8,
           marker_x,
           bar_y - 1,
           red
