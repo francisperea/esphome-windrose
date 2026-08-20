@@ -1,7 +1,7 @@
 substitutions:
+  sample_capacity: "2542"
   wind_direction_entity: sensor.estacion_direccion_del_viento
   wind_speed_entity: sensor.estacion_velocidad_del_viento
-  wind_sample_capacity: "2542"
   temperature_entity: sensor.estacion_temperatura_exterior
   humidity_entity: sensor.estacion_humedad_exterior
   apparent_temperature_entity: sensor.estacion_temperatura_aparente
@@ -17,7 +17,6 @@ substitutions:
   rain_total_entity: sensor.estacion_lluvia_total
   sunrise_entity: sensor.sun_next_rising
   sunset_entity: sensor.sun_next_setting
-  climate_sample_capacity: "2542"
 
 esphome:
   name: m5-stack-fire
@@ -127,15 +126,15 @@ globals:
     initial_value: "0"
 
   - id: sample_sector
-    type: uint8_t[${wind_sample_capacity}]
+    type: uint8_t[${sample_capacity}]
     restore_value: false
 
   - id: sample_bft
-    type: uint8_t[${wind_sample_capacity}]
+    type: uint8_t[${sample_capacity}]
     restore_value: false
 
   - id: sample_ts
-    type: uint32_t[${wind_sample_capacity}]
+    type: uint32_t[${sample_capacity}]
     restore_value: false
 
   - id: sector_count
@@ -167,11 +166,11 @@ globals:
     initial_value: "0"
 
   - id: climate_temperature
-    type: float[${climate_sample_capacity}]
+    type: float[${sample_capacity}]
     restore_value: false
 
   - id: climate_humidity
-    type: float[${climate_sample_capacity}]
+    type: float[${sample_capacity}]
     restore_value: false
 
 sensor:
@@ -226,27 +225,15 @@ sensor:
     entity_id: ${wind_gust_entity}
     internal: true
 
-    on_value:
-      then:
-        - component.update: m5_display
-
   - platform: homeassistant
     id: cloud_base
     entity_id: ${cloud_base_entity}
     internal: true
 
-    on_value:
-      then:
-        - component.update: m5_display
-
   - platform: homeassistant
     id: barometer
     entity_id: ${barometer_entity}
     internal: true
-
-    on_value:
-      then:
-        - component.update: m5_display
 
   - platform: homeassistant
     id: temperature
@@ -262,54 +249,30 @@ sensor:
     entity_id: ${humidity_entity}
     internal: true
 
-  #  on_value:
-  #    then:
-  #      - component.update: m5_display
-
   - platform: homeassistant
     id: apparent_temperature
     entity_id: ${apparent_temperature_entity}
     internal: true
-
-    on_value:
-      then:
-        - component.update: m5_display
 
   - platform: homeassistant
     id: solar_radiation
     entity_id: ${solar_radiation_entity}
     internal: true
 
-    on_value:
-      then:
-        - component.update: m5_display
-
   - platform: homeassistant
     id: uv_index
     entity_id: ${uv_index_entity}
     internal: true
-
-    on_value:
-      then:
-        - component.update: m5_display
 
   - platform: homeassistant
     id: solar_radiation_max
     entity_id: ${solar_radiation_max_entity}
     internal: true
 
-    on_value:
-      then:
-        - component.update: m5_display
-
   - platform: homeassistant
     id: rain_rate
     entity_id: ${rain_rate_entity}
     internal: true
-
-    on_value:
-      then:
-        - component.update: m5_display
 
   - platform: homeassistant
     id: rain_last_hour
@@ -325,18 +288,10 @@ sensor:
     entity_id: ${rain_24h_entity}
     internal: true
 
-  #  on_value:
-  #    then:
-  #      - component.update: m5_display
-
   - platform: homeassistant
     id: rain_total
     entity_id: ${rain_total_entity}
     internal: true
-
-   # on_value:
-   #   then:
-   #     - component.update: m5_display
 
   - platform: wifi_signal
     id: wifi_db
@@ -374,18 +329,10 @@ text_sensor:
     entity_id: ${sunrise_entity}
     internal: true
 
-    on_value:
-      then:
-        - component.update: m5_display
-
   - platform: homeassistant
     id: sunset
     entity_id: ${sunset_entity}
     internal: true
-
-    on_value:
-      then:
-        - component.update: m5_display
 
 interval:
 
@@ -475,7 +422,7 @@ interval:
           // sustituir.
           // ---------------------------------------------------------
 
-          if (id(sample_count) >= ${wind_sample_capacity}) {
+          if (id(sample_count) >= ${sample_capacity}) {
 
             int old_sector =
               id(sample_sector)[pos];
@@ -498,7 +445,7 @@ interval:
           // Si todavía no está lleno, aumentar número de muestras.
           // ---------------------------------------------------------
 
-          if (id(sample_count) < ${wind_sample_capacity})
+          if (id(sample_count) < ${sample_capacity})
             id(sample_count)++;
 
           // ---------------------------------------------------------
@@ -527,7 +474,7 @@ interval:
           // ---------------------------------------------------------
 
           id(sample_pos) =
-            (pos + 1) % ${wind_sample_capacity};
+            (pos + 1) % ${sample_capacity};
 
           // ---------------------------------------------------------
           // ACTUALIZAR INICIO DEL PERIODO
@@ -539,7 +486,7 @@ interval:
           // antigua.
           // ---------------------------------------------------------
 
-          if (id(sample_count) < ${wind_sample_capacity}) {
+          if (id(sample_count) < ${sample_capacity}) {
 
             id(first_wind_epoch) =
               id(sample_ts)[0];
@@ -568,11 +515,11 @@ interval:
             id(humidity).state;
 
           if (id(climate_sample_count) <
-              ${climate_sample_capacity})
+              ${sample_capacity})
             id(climate_sample_count)++;
 
           id(climate_sample_pos) =
-            (climate_pos + 1) % ${climate_sample_capacity};
+            (climate_pos + 1) % ${sample_capacity};
 
       - component.update: m5_display
 
@@ -692,21 +639,14 @@ display:
   - platform: mipi_spi
     id: m5_display
     model: M5CORE
-
     cs_pin: GPIO14
     dc_pin: GPIO27
     reset_pin: GPIO33
-
     data_rate: 40MHz
-
     invert_colors: true
-
     auto_clear_enabled: true
-
     buffer_size: 100%
-
     update_interval: never
-
     use_axis_flips: false
 
     lambda: |-
@@ -977,7 +917,7 @@ display:
 
         if (climate_count > 0) {
           const int climate_start =
-            climate_count >= ${climate_sample_capacity}
+            climate_count >= ${sample_capacity}
               ? id(climate_sample_pos)
               : 0;
 
@@ -989,7 +929,7 @@ display:
           for (int i = 1; i < climate_count; i++) {
             int index =
               (climate_start + i) %
-              ${climate_sample_capacity};
+              ${sample_capacity};
             float sample_temperature =
               id(climate_temperature)[index];
 
@@ -1050,10 +990,10 @@ display:
           for (int i = 1; i < climate_count; i++) {
             int previous_index =
               (climate_start + i - 1) %
-              ${climate_sample_capacity};
+              ${sample_capacity};
             int current_index =
               (climate_start + i) %
-              ${climate_sample_capacity};
+              ${sample_capacity};
 
             float previous_temperature =
               id(climate_temperature)[previous_index];
