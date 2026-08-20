@@ -46,7 +46,6 @@ logger:
 api:
   encryption:
     key: !secret m5_stack_fire__encryption_key
-
   on_client_connected:
     then:
       - lambda: |-
@@ -644,6 +643,7 @@ display:
     buffer_size: 100%
     update_interval: never
     use_axis_flips: false
+    rotation: "180"
 
     lambda: |-
 
