@@ -1,13 +1,23 @@
 substitutions:
   wind_direction_entity: sensor.estacion_direccion_del_viento
   wind_speed_entity: sensor.estacion_velocidad_del_viento
-  wind_sample_capacity: "212"
+  wind_sample_capacity: "2542"
   temperature_entity: sensor.estacion_temperatura_exterior
   humidity_entity: sensor.estacion_humedad_exterior
+  apparent_temperature_entity: sensor.estacion_temperatura_aparente
+  solar_radiation_entity: sensor.estacion_radiacion_solar
+  uv_index_entity: sensor.estacion_indice_uv
+  solar_radiation_max_entity: sensor.estacion_maxima_radiacion_solar
+  wind_gust_entity: sensor.estacion_racha_de_viento
+  cloud_base_entity: sensor.estacion_techo_de_nubes
+  barometer_entity: sensor.estacion_barometro_mbar
   rain_rate_entity: sensor.estacion_tasa_de_lluvia_por_hora
-  rain_today_entity: sensor.estacion_lluvia_24h
+  rain_last_hour_entity: sensor.estacion_lluvia_ultima_hora
+  rain_24h_entity: sensor.estacion_lluvia_24h
   rain_total_entity: sensor.estacion_lluvia_total
-  climate_sample_capacity: "72"
+  sunrise_entity: sensor.sun_next_rising
+  sunset_entity: sensor.sun_next_setting
+  climate_sample_capacity: "2542"
 
 esphome:
   name: m5-stack-fire
@@ -250,6 +260,33 @@ sensor:
               id(last_wind_epoch) =
                 current_time.timestamp;
 
+  - platform: homeassistant
+    id: wind_gust
+    entity_id: ${wind_gust_entity}
+    internal: true
+
+    on_value:
+      then:
+        - component.update: m5_display
+
+  - platform: homeassistant
+    id: cloud_base
+    entity_id: ${cloud_base_entity}
+    internal: true
+
+    on_value:
+      then:
+        - component.update: m5_display
+
+  - platform: homeassistant
+    id: barometer
+    entity_id: ${barometer_entity}
+    internal: true
+
+    on_value:
+      then:
+        - component.update: m5_display
+
   # ---------------------------------------------------------------
   # CLIMA Y LLUVIA
   # ---------------------------------------------------------------
@@ -273,6 +310,42 @@ sensor:
   #      - component.update: m5_display
 
   - platform: homeassistant
+    id: apparent_temperature
+    entity_id: ${apparent_temperature_entity}
+    internal: true
+
+    on_value:
+      then:
+        - component.update: m5_display
+
+  - platform: homeassistant
+    id: solar_radiation
+    entity_id: ${solar_radiation_entity}
+    internal: true
+
+    on_value:
+      then:
+        - component.update: m5_display
+
+  - platform: homeassistant
+    id: uv_index
+    entity_id: ${uv_index_entity}
+    internal: true
+
+    on_value:
+      then:
+        - component.update: m5_display
+
+  - platform: homeassistant
+    id: solar_radiation_max
+    entity_id: ${solar_radiation_max_entity}
+    internal: true
+
+    on_value:
+      then:
+        - component.update: m5_display
+
+  - platform: homeassistant
     id: rain_rate
     entity_id: ${rain_rate_entity}
     internal: true
@@ -282,8 +355,17 @@ sensor:
         - component.update: m5_display
 
   - platform: homeassistant
-    id: rain_today
-    entity_id: ${rain_today_entity}
+    id: rain_last_hour
+    entity_id: ${rain_last_hour_entity}
+    internal: true
+
+    on_value:
+      then:
+        - component.update: m5_display
+
+  - platform: homeassistant
+    id: rain_24h
+    entity_id: ${rain_24h_entity}
     internal: true
 
   #  on_value:
@@ -317,6 +399,40 @@ time:
 
   - platform: homeassistant
     id: ha_time
+    on_time_sync:
+      then:
+        - script.execute: update_backlight
+    on_time:
+      - hours: 23
+        minutes: 30
+        seconds: 0
+        then:
+          - script.execute: update_backlight
+      - hours: 7
+        minutes: 30
+        seconds: 0
+        then:
+          - script.execute: update_backlight
+
+text_sensor:
+
+  - platform: homeassistant
+    id: sunrise
+    entity_id: ${sunrise_entity}
+    internal: true
+
+    on_value:
+      then:
+        - component.update: m5_display
+
+  - platform: homeassistant
+    id: sunset
+    entity_id: ${sunset_entity}
+    internal: true
+
+    on_value:
+      then:
+        - component.update: m5_display
 
 # -------------------------------------------------------------------
 # ADQUISICIÓN DE DATOS
@@ -527,7 +643,7 @@ binary_sensor:
     on_press:
       then:
         - lambda: |-
-            id(active_screen) = 0;
+            id(active_screen) = 2;
         - component.update: m5_display
 
   - platform: gpio
@@ -553,7 +669,7 @@ binary_sensor:
     on_press:
       then:
         - lambda: |-
-            id(active_screen) = 2;
+            id(active_screen) = 0;
         - component.update: m5_display
 
 output:
@@ -569,6 +685,32 @@ light:
     internal: true
     output: backlight
     restore_mode: ALWAYS_ON
+
+script:
+
+  - id: update_backlight
+    mode: restart
+    then:
+      - if:
+          condition:
+            lambda: |-
+              auto now = id(ha_time).now();
+              if (!now.is_valid())
+                return false;
+
+              const int minutes =
+                now.hour * 60 + now.minute;
+
+              return minutes >= 23 * 60 + 30 ||
+                minutes < 7 * 60 + 30;
+          then:
+            - light.turn_on:
+                id: display_backlight
+                brightness: 25%
+          else:
+            - light.turn_on:
+                id: display_backlight
+                brightness: 100%
 
 # -------------------------------------------------------------------
 # SPI
@@ -661,6 +803,55 @@ display:
       const auto red =
         Color(255, 0, 0);
 
+      auto print_diagnostics = [&]() {
+        uint32_t uptime_seconds =
+          isnan(id(uptime_sensor).state)
+            ? 0
+            : static_cast<uint32_t>(
+                id(uptime_sensor).state
+              );
+        const uint32_t days =
+          uptime_seconds / 86400;
+        uptime_seconds %= 86400;
+        const uint32_t hours =
+          uptime_seconds / 3600;
+        uptime_seconds %= 3600;
+        const uint32_t minutes =
+          uptime_seconds / 60;
+        const uint32_t seconds =
+          uptime_seconds % 60;
+
+        it.printf(
+          8,
+          218,
+          id(font_small),
+          muted,
+          "WiFi %.0f",
+          id(wifi_db).state
+        );
+        it.printf(
+          94,
+          218,
+          id(font_small),
+          muted,
+          "D:%lu",
+          static_cast<unsigned long>(
+            id(ha_api_disconnects)
+          )
+        );
+        it.printf(
+          144,
+          218,
+          id(font_small),
+          muted,
+          "Up %lud %02lu:%02lu:%02lu",
+          static_cast<unsigned long>(days),
+          static_cast<unsigned long>(hours),
+          static_cast<unsigned long>(minutes),
+          static_cast<unsigned long>(seconds)
+        );
+      };
+
       // ============================================================
       // CLIMATE SCREEN
       // ============================================================
@@ -675,15 +866,7 @@ display:
         it.fill(bg);
 
         it.print(
-          160, 4,
-          id(font_title),
-          text,
-          TextAlign::TOP_CENTER,
-          "Climate"
-        );
-
-        it.print(
-          20, 35,
+          20, 4,
           id(font_small),
           muted,
           "Temperature"
@@ -691,14 +874,14 @@ display:
 
         if (isnan(id(temperature).state)) {
           it.print(
-            20, 53,
+            20, 20,
             id(font_value),
             text,
             "--"
           );
         } else {
           it.printf(
-            20, 53,
+            20, 20,
             id(font_value),
             temperature_color,
             "%.1f C",
@@ -707,7 +890,7 @@ display:
         }
 
         it.print(
-          184, 35,
+          184, 4,
           id(font_small),
           muted,
           "Humidity"
@@ -715,14 +898,14 @@ display:
 
         if (isnan(id(humidity).state)) {
           it.print(
-            184, 53,
+            184, 20,
             id(font_value),
             text,
             "--"
           );
         } else {
           it.printf(
-            184, 53,
+            184, 20,
             id(font_value),
             humidity_color,
             "%.0f%%",
@@ -730,10 +913,102 @@ display:
           );
         }
 
+        it.print(
+          20, 55,
+          id(font_small),
+          muted,
+          "Apparent"
+        );
+        if (isnan(id(apparent_temperature).state)) {
+          it.print(
+            20, 72,
+            id(font_small),
+            text,
+            "--"
+          );
+        } else {
+          it.printf(
+            20, 72,
+            id(font_small),
+            text,
+            "%.1f C",
+            id(apparent_temperature).state
+          );
+        }
+
+        it.print(
+          172, 55,
+          id(font_small),
+          muted,
+          "Solar radiation"
+        );
+        if (isnan(id(solar_radiation).state)) {
+          it.print(
+            172, 72,
+            id(font_small),
+            text,
+            "--"
+          );
+        } else {
+          it.printf(
+            172, 72,
+            id(font_small),
+            text,
+            "%.0f W/m2",
+            id(solar_radiation).state
+          );
+        }
+
+        it.print(
+          20, 89,
+          id(font_small),
+          muted,
+          "UV index"
+        );
+        if (isnan(id(uv_index).state)) {
+          it.print(
+            20, 106,
+            id(font_small),
+            text,
+            "--"
+          );
+        } else {
+          it.printf(
+            20, 106,
+            id(font_small),
+            text,
+            "%.1f",
+            id(uv_index).state
+          );
+        }
+
+        it.print(
+          172, 89,
+          id(font_small),
+          muted,
+          "Max solar"
+        );
+        if (isnan(id(solar_radiation_max).state)) {
+          it.print(
+            172, 106,
+            id(font_small),
+            text,
+            "--"
+          );
+        } else {
+          it.printf(
+            172, 106,
+            id(font_small),
+            text,
+            "%.0f W/m2",
+            id(solar_radiation_max).state
+          );
+        }
+
         const int graph_x = 24;
-        const int graph_y = 111;
+        const int graph_y = 128;
         const int graph_width = 272;
-        const int graph_height = 74;
+        const int graph_height = 61;
         const int climate_count =
           id(climate_sample_count);
 
@@ -743,6 +1018,15 @@ display:
           graph_width,
           graph_height,
           grid
+        );
+
+        it.print(
+          160,
+          graph_y - 14,
+          id(font_small),
+          muted,
+          TextAlign::TOP_CENTER,
+          "12 h"
         );
 
         for (int i = 1; i < 4; i++) {
@@ -893,7 +1177,7 @@ display:
           }
         } else {
           it.print(
-            160, 145,
+            160, 158,
             id(font_small),
             muted,
             TextAlign::CENTER,
@@ -901,13 +1185,7 @@ display:
           );
         }
 
-        it.print(
-          160, 218,
-          id(font_small),
-          muted,
-          TextAlign::TOP_CENTER,
-          "A Wind  |  B Climate  |  C Rain"
-        );
+        print_diagnostics();
 
         return;
       }
@@ -924,31 +1202,23 @@ display:
         it.fill(bg);
 
         it.print(
-          160, 4,
-          id(font_title),
-          text,
-          TextAlign::TOP_CENTER,
-          "Rain"
-        );
-
-        it.print(
-          20, 38,
+          12, 4,
           id(font_small),
           muted,
-          "Rain rate"
+          "Rate / hour"
         );
 
         if (isnan(id(rain_rate).state)) {
           it.print(
-            20, 56,
-            id(font_value),
+            12, 21,
+            id(font_small),
             text,
             "--"
           );
         } else {
           it.printf(
-            20, 56,
-            id(font_value),
+            12, 21,
+            id(font_small),
             rain_color,
             "%.1f mm/h",
             id(rain_rate).state
@@ -956,37 +1226,129 @@ display:
         }
 
         it.print(
-          180, 38,
+          164, 4,
           id(font_small),
           muted,
-          "Today"
+          "Last hour"
         );
 
-        if (isnan(id(rain_today).state)) {
+        if (isnan(id(rain_last_hour).state)) {
           it.print(
-            180, 56,
-            id(font_value),
+            164, 21,
+            id(font_small),
             text,
             "--"
           );
         } else {
           it.printf(
-            180, 56,
-            id(font_value),
+            164, 21,
+            id(font_small),
             rain_color,
             "%.1f mm",
-            id(rain_today).state
+            id(rain_last_hour).state
+          );
+        }
+
+        it.print(
+          12, 38,
+          id(font_small),
+          muted,
+          "Rain 24 h"
+        );
+        if (isnan(id(rain_24h).state)) {
+          it.print(
+            12, 55,
+            id(font_small),
+            text,
+            "--"
+          );
+        } else {
+          it.printf(
+            12, 55,
+            id(font_small),
+            rain_color,
+            "%.1f mm",
+            id(rain_24h).state
+          );
+        }
+
+        it.print(
+          164, 38,
+          id(font_small),
+          muted,
+          "Rain total"
+        );
+        if (isnan(id(rain_total).state)) {
+          it.print(
+            164, 55,
+            id(font_small),
+            text,
+            "--"
+          );
+        } else {
+          it.printf(
+            164, 55,
+            id(font_small),
+            rain_color,
+            "%.1f mm",
+            id(rain_total).state
+          );
+        }
+
+        it.print(
+          12, 72,
+          id(font_small),
+          muted,
+          "Cloud base"
+        );
+        if (isnan(id(cloud_base).state)) {
+          it.print(
+            12, 89,
+            id(font_small),
+            text,
+            "--"
+          );
+        } else {
+          it.printf(
+            12, 89,
+            id(font_small),
+            text,
+            "%.0f m",
+            id(cloud_base).state
+          );
+        }
+
+        it.print(
+          164, 72,
+          id(font_small),
+          muted,
+          "Barometer"
+        );
+        if (isnan(id(barometer).state)) {
+          it.print(
+            164, 89,
+            id(font_small),
+            text,
+            "--"
+          );
+        } else {
+          it.printf(
+            164, 89,
+            id(font_small),
+            text,
+            "%.0f mbar",
+            id(barometer).state
           );
         }
 
         const int bar_x = 20;
-        const int bar_y = 111;
+        const int bar_y = 151;
         const int bar_width = 280;
         const int bar_height = 22;
 
         it.print(
           bar_x,
-          bar_y - 23,
+          bar_y - 19,
           id(font_small),
           muted,
           "Current intensity (0-20 mm/h)"
@@ -1037,37 +1399,7 @@ display:
           "20"
         );
 
-        it.print(
-          20, 169,
-          id(font_small),
-          muted,
-          "Accumulated total"
-        );
-
-        if (isnan(id(rain_total).state)) {
-          it.print(
-            20, 187,
-            id(font_value),
-            text,
-            "--"
-          );
-        } else {
-          it.printf(
-            20, 187,
-            id(font_value),
-            rain_color,
-            "%.1f mm",
-            id(rain_total).state
-          );
-        }
-
-        it.print(
-          160, 218,
-          id(font_small),
-          muted,
-          TextAlign::TOP_CENTER,
-          "A Wind  |  B Climate  |  C Rain"
-        );
+        print_diagnostics();
 
         return;
       }
@@ -1076,9 +1408,9 @@ display:
       // GEOMETRÍA
       // ============================================================
 
-      const int cx = 142;
-      const int cy = 128;
-      const int r = 58;
+      const int cx = 160;
+      const int cy = 121;
+      const int r = 49;
 
       // ============================================================
       // BEAUFORT
@@ -1131,23 +1463,13 @@ display:
       it.fill(bg);
 
       // ============================================================
-      // TÍTULO
-      // ============================================================
-
-      it.print(
-        160, 4,
-        id(font_title),
-        text,
-        TextAlign::TOP_CENTER,
-        "Wind Vane"
-      );
-
-      // ============================================================
       // PERIODO
       // ============================================================
 
       char start_buf[10] = "--:--:--";
       char end_buf[10] = "--:--:--";
+      char sunrise_buf[6] = "--:--";
+      char sunset_buf[6] = "--:--";
 
       uint32_t start_epoch =
         id(first_wind_epoch);
@@ -1193,20 +1515,46 @@ display:
         }
       }
 
-      it.print(
-        8, 26,
-        id(font_small),
-        text,
-        "Period:"
-      );
+      const std::string &sunrise_state =
+        id(sunrise).state;
+      const std::string &sunset_state =
+        id(sunset).state;
+
+      if (sunrise_state.size() >= 16 &&
+          sunrise_state[10] == 'T') {
+        snprintf(
+          sunrise_buf,
+          sizeof(sunrise_buf),
+          "%c%c:%c%c",
+          sunrise_state[11],
+          sunrise_state[12],
+          sunrise_state[14],
+          sunrise_state[15]
+        );
+      }
+
+      if (sunset_state.size() >= 16 &&
+          sunset_state[10] == 'T') {
+        snprintf(
+          sunset_buf,
+          sizeof(sunset_buf),
+          "%c%c:%c%c",
+          sunset_state[11],
+          sunset_state[12],
+          sunset_state[14],
+          sunset_state[15]
+        );
+      }
 
       it.printf(
-        65, 26,
+        8, 4,
         id(font_small),
         text,
-        "%s - %s",
+        "%s-%s R:%s S:%s",
         start_buf,
-        end_buf
+        end_buf,
+        sunrise_buf,
+        sunset_buf
       );
 
       // ============================================================
@@ -1214,14 +1562,14 @@ display:
       // ============================================================
 
       it.print(
-        8, 49,
+        8, 24,
         id(font_small),
         text,
         "Wind direction"
       );
 
       it.print(
-        198, 49,
+        214, 24,
         id(font_small),
         text,
         "Wind speed"
@@ -1237,7 +1585,7 @@ display:
         beaufort_number(speed);
 
       it.printf(
-        8, 63,
+        8, 40,
         id(font_value),
         text,
         "%.1f °",
@@ -1245,12 +1593,60 @@ display:
       );
 
       it.printf(
-        198, 63,
+        214, 40,
         id(font_value),
         text,
         "%.2f kt",
         speed
       );
+
+      it.print(
+        8, 150,
+        id(font_small),
+        text,
+        "Wind gust"
+      );
+
+      if (isnan(id(wind_gust).state)) {
+        it.print(
+          8, 166,
+          id(font_small),
+          text,
+          "--"
+        );
+      } else {
+        it.printf(
+          8, 166,
+          id(font_small),
+          text,
+          "%.2f kt",
+          id(wind_gust).state
+        );
+      }
+
+      it.print(
+        218, 150,
+        id(font_small),
+        text,
+        "Cloud base"
+      );
+
+      if (isnan(id(cloud_base).state)) {
+        it.print(
+          218, 166,
+          id(font_small),
+          text,
+          "--"
+        );
+      } else {
+        it.printf(
+          218, 166,
+          id(font_small),
+          text,
+          "%.0f m",
+          id(cloud_base).state
+        );
+      }
 
       // ============================================================
       // ROSA DE LOS VIENTOS
@@ -1567,48 +1963,39 @@ display:
       // ESCALA BEAUFORT
       // ==========================================================
 
-      const int bar_x = 287;
-      const int bar_y = 96;
-      const int bar_w = 20;
-      const int band_h = 9;
+      const int bar_x = 10;
+      const int bar_y = 186;
+      const int bar_w = 300;
+      const int band_w = bar_w / 13;
+      const int band_h = 19;
 
-      it.print(
-        bar_x - 9,
-        84,
-        id(font_small),
-        text,
-        "Beaufort"
-      );
+      for (int bb = 0; bb <= 12; bb++) {
 
-      for (int bb = 12;
-           bb >= 0;
-           bb--) {
-
-        int y =
-          bar_y +
-          (12 - bb) * band_h;
+        int x =
+          bar_x + bb * band_w;
 
         it.filled_rectangle(
-          bar_x,
-          y,
-          bar_w,
+          x,
+          bar_y,
+          band_w,
           band_h,
           beaufort_color(bb)
         );
 
         it.rectangle(
-          bar_x,
-          y,
-          bar_w,
+          x,
+          bar_y,
+          band_w,
           band_h,
           Color(190, 190, 190)
         );
 
         it.printf(
-          bar_x + bar_w + 4,
-          y - 1,
+          x + band_w / 2,
+          bar_y + 1,
           id(font_small),
           text,
+          TextAlign::TOP_CENTER,
           "%d",
           bb
         );
@@ -1618,26 +2005,24 @@ display:
       // MARCADOR BEAUFORT
       // ============================================================
 
-      int marker_y =
-        bar_y +
-        (12 - bft) * band_h +
-        band_h / 2;
+      int marker_x =
+        bar_x + bft * band_w + band_w / 2;
 
       for (int i = 0; i < 8; i++) {
 
         it.line(
-          bar_x - 10,
-          marker_y - 5 + i,
-          bar_x - 1,
-          marker_y,
+          marker_x - 6 + i,
+          bar_y - 9,
+          marker_x,
+          bar_y - 1,
           red
         );
 
         it.line(
-          bar_x - 10,
-          marker_y + 5 - i,
-          bar_x - 1,
-          marker_y,
+          marker_x + 6 - i,
+          bar_y - 9,
+          marker_x,
+          bar_y - 1,
           red
         );
       }
@@ -1646,32 +2031,7 @@ display:
       // DIAGNÓSTICO INFERIOR
       // ============================================================
 
-      it.printf(
-        8,
-        216,
-        id(font_small),
-        muted,
-        "WiFi %.0f dBm",
-        id(wifi_db).state
-      );
-
-      it.printf(
-        122,
-        216,
-        id(font_small),
-        muted,
-        "Disc: %u",
-        id(ha_api_disconnects)
-      );
-
-      it.printf(
-        205,
-        216,
-        id(font_small),
-        muted,
-        "Up: %.0fs",
-        id(uptime_sensor).state
-      );
+      print_diagnostics();
 
 # -------------------------------------------------------------------
 # RUNTIME STATS

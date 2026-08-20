@@ -12,16 +12,27 @@ En `m5-stack-fire-windrose.yaml`, ajusta las entidades de `substitutions`:
 substitutions:
   wind_direction_entity: sensor.ecowitt_wind_direction
   wind_speed_entity: sensor.ecowitt_wind_speed
+  wind_gust_entity: sensor.ecowitt_wind_gust
+  cloud_base_entity: sensor.ecowitt_cloud_base
   temperature_entity: sensor.ecowitt_outdoor_temperature
   humidity_entity: sensor.ecowitt_humidity
+  apparent_temperature_entity: sensor.ecowitt_apparent_temperature
+  solar_radiation_entity: sensor.ecowitt_solar_radiation
+  uv_index_entity: sensor.ecowitt_uv_index
+  solar_radiation_max_entity: sensor.ecowitt_max_solar_radiation
   rain_rate_entity: sensor.ecowitt_rain_rate
-  rain_today_entity: sensor.ecowitt_rain_today
+  rain_rate_hour_entity: sensor.ecowitt_rain_rate_hour
+  rain_last_hour_entity: sensor.ecowitt_rain_last_hour
+  rain_24h_entity: sensor.ecowitt_rain_24h
   rain_total_entity: sensor.ecowitt_rain_total
+  barometer_entity: sensor.ecowitt_barometer
+  sunrise_entity: sensor.sun_next_rising
+  sunset_entity: sensor.sun_next_setting
 ```
 
 Usa los `entity_id` reales de Home Assistant. La pantalla espera temperatura
-en °C, humedad en %, y lluvia (tasa, acumulado diario y acumulado total) en
-mm/h o mm, respectivamente.
+en °C, humedad en %, radiación solar en W/m², techo de nubes en metros,
+barómetro en mbar y lluvia en mm/h o mm.
 
 ## 2. Pantallas y botones
 
@@ -30,14 +41,18 @@ instante:
 
 | Botón | Pantalla |
 | --- | --- |
-| A | Rosa de los vientos original |
-| B | Temperatura y humedad, con gráfica de las últimas 72 muestras válidas |
-| C | Tasa de lluvia, acumulado diario y acumulado total |
+| A | Lluvia |
+| B | Temperatura y humedad, con gráfica de las últimas 12 horas |
+| C | Rosa de los vientos |
 
-Las muestras climáticas se toman cada 17 segundos mientras la API de Home
-Assistant está conectada. Los botones dejan de ajustar el brillo para poder
-dedicarse por completo a la navegación; la retroiluminación permanece
-encendida como antes.
+Las muestras de viento, temperatura y humedad se toman cada 17 segundos
+mientras la API de Home Assistant está conectada. Los históricos muestran las
+últimas 12 horas. Los botones dejan de ajustar el brillo para dedicarse por
+completo a la navegación.
+
+La retroiluminación se atenúa automáticamente al 25 % entre las 23:30 y las
+07:30, según la hora sincronizada desde Home Assistant; fuera de ese intervalo
+permanece al 100 %.
 
 ## 3. Empareja el dispositivo con Home Assistant
 
