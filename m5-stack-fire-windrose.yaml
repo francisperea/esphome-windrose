@@ -1850,10 +1850,10 @@ display:
       // ==========================================================
 
       const int bar_x = 10;
-      const int bar_y = 195;
+      const int bar_y = 200;
       const int bar_w = 300;
       const int band_w = bar_w / 13;
-      const int band_h = 17;
+      const int band_h = 22;
 
       for (int bb = 0; bb <= 12; bb++) {
 
